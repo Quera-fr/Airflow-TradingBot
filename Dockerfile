@@ -4,9 +4,9 @@ WORKDIR /opt/airflow
 
 COPY requirements.txt .
 
-COPY memory.json .
-
 RUN pip install -r requirements.txt
+
+COPY memory.json .
 
 COPY plugins/ plugins/
 
