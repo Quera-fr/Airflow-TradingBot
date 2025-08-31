@@ -3,93 +3,251 @@ import time, json, math, os
 
 from openai import OpenAI
 import pandas as pd
+import numpy as np
+import math
 
-
-
-def get_market_data(client, symbol="ETHUSDC", interval='1h', limit=60) -> dict:
+def get_market_data(client, symbol: str = "ETHUSDC", interval: str = "1h",
+                    limit: int = 12, warmup: int = 120, include_ohlcv: bool = False) -> dict:
     """
-    Récupère les données de marché pour un symbole donné.
+    Snapshot de marché compact et 'pensable' par un LLM.
 
-    client : Client (Binance API client)
-    symbol : str (symbole de la paire de trading, ex: "ETHUSDC")
-    interval : str (intervalle de temps pour les bougies, ex: "1h")
-    limit : int (nombre de bougies à récupérer, ex: 60)
+    Params
+    ------
+    client : binance.Client
+    symbol : ex. "ETHUSDC"
+    interval : ex. "1h"
+    limit : nb de barres à retourner (résultats finaux)
+    warmup : nb de barres à utiliser pour stabiliser les indicateurs
+    include_ohlcv : si True, inclut aussi l'OHLCV brut (pour la UI)
+
+    Retour
+    ------
+    {
+      "symbol": ..., "tf": interval, "fees_bps": 7,
+      "features": {
+        "ohlcv_stats": { ... },          # synthèse H1 (1h/3h/12h)
+        "hourly_snapshots": [ ... ],     # 12 barres enrichies (close/EMA/RSI/MACD/ATR)
+        "stats": {
+          "ema20"/"ema50"/"rsi14": {last,min,max,mean,slope,(above50_cnt)},
+          "macd": {last,signal_last,hist_last,hist_mean},
+          "atr_pct": {last,mean},
+          "h1": {dist_ema50_pct, hh, ll, consec_hist_pos, hist_slope_3}
+        },
+        "ohlcv": [...]  # optionnel si include_ohlcv=True
+      }
+    }
     """
-    # Récupère 60 bougies 1h ETHUSDC
-    klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
 
-    # DataFrame t o h l c v
-    df = pd.DataFrame(klines, columns=[
-        "t","o","h","l","c","v","ct","qv","n","tbv","tbq","i"
-    ])
-    df = df[["t","o","h","l","c","v"]].astype(float)
-    df["t"] = (df["t"] // 1000).astype(int)  # timestamp en secondes
 
-    # EMA
-    df["ema20"] = df["c"].ewm(span=20, adjust=False).mean()
-    df["ema50"] = df["c"].ewm(span=50, adjust=False).mean()
+    # ------------------------------
+    # Helpers locaux
+    # ------------------------------
+    def _series_stats(vals, rsi=False) -> dict:
+        a = np.array([v for v in vals if v == v], dtype=float)  # drop NaN
+        if a.size == 0:
+            return {}
+        x = np.arange(a.size, dtype=float)
+        slope = float(np.polyfit(x, a, 1)[0]) if a.size >= 2 else 0.0
+        out = {
+            "last": round(a[-1], 2),
+            "min": round(a.min(), 2),
+            "max": round(a.max(), 2),
+            "mean": round(a.mean(), 2),
+            "slope": round(slope, 4),
+        }
+        if rsi:
+            out["above50_cnt"] = int((a > 50).sum())
+        return out
 
-    # RSI14
-    delta = df["c"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
+    def _pack_h1(df_in: pd.DataFrame, n: int = 12) -> list[dict]:
+        x = df_in.tail(min(n, len(df_in))).copy()
+        x["above_ema"] = (x["c"] > x["ema20"]) & (x["ema20"] > x["ema50"])
+        x["rsi_trend"] = (
+            x["rsi14"].diff().rolling(3)
+            .apply(lambda s: 1 if (s > 0).sum() >= 2 else 0)
+            .map({1: "up", 0: "down"})
+            .fillna("flat")
+        )
+        # Nettoyage/arrondis
+        out = x[[
+            "t", "c", "ema20", "ema50", "rsi14",
+            "macd_line", "macd_signal", "macd_hist",
+            "atr_pct", "above_ema", "rsi_trend"
+        ]].rename(columns={"t": "time", "c": "close", "macd_line": "macd", "macd_signal": "macd_sig"}).copy()
+        out["time"] = out["time"].astype(int)
+        for col, nd in [("close", 2), ("ema20", 2), ("ema50", 2), ("rsi14", 2), ("macd", 3), ("macd_sig", 3), ("macd_hist", 3)]:
+            out[col] = out[col].round(nd)
+        return out.to_dict("records")
+
+    def _h1_summary(df_in: pd.DataFrame) -> dict:
+        if df_in.empty:
+            return {"dist_ema50_pct": None, "hh": None, "ll": None, "consec_hist_pos": 0, "hist_slope_3": None}
+
+        close = df_in["c"].values
+        ema50 = df_in["ema50"].values
+        hist  = (df_in["macd_line"] - df_in["macd_signal"]).tolist()
+
+        dist = round(100 * (close[-1] - ema50[-1]) / ema50[-1], 2) if ema50[-1] == ema50[-1] else None
+        hh   = round(float(df_in["h"].max()), 2)
+        ll   = round(float(df_in["l"].min()), 2)
+
+        # <<< remplace l'ancienne ligne par ces deux-là >>>
+        consec_pos   = _streak_pos(hist)
+        hist_slope_3 = round(pd.Series(hist).diff().tail(3).sum(), 3) if len(hist) >= 3 else None
+
+        return {"dist_ema50_pct": dist, "hh": hh, "ll": ll,
+                "consec_hist_pos": int(consec_pos), "hist_slope_3": hist_slope_3}
+    
+    def _streak_pos(arr, eps=1e-9):
+        cnt = 0
+        for v in reversed(arr):
+            if v is None or (isinstance(v, float) and math.isnan(v)) or v <= eps:
+                break
+            cnt += 1
+        return cnt
+
+    def _ohlcv_stats(df_in: pd.DataFrame, lookback: int = 12) -> dict:
+        x = df_in.tail(min(lookback, len(df_in))).copy()
+        if x.empty:
+            return {}
+        # variations %
+        def pct(a, b):
+            return None if (a != a or b != b or b == 0) else round(100 * (a / b - 1), 2)
+        chg_1h = pct(x["c"].iloc[-1], x["o"].iloc[-1]) if len(x) >= 1 else None
+        chg_3h = pct(x["c"].iloc[-1], x["o"].iloc[-3]) if len(x) >= 3 else None
+        chg_12h = pct(x["c"].iloc[-1], x["o"].iloc[0]) if len(x) >= 12 else None
+        # range & volumes
+        high_12 = round(float(x["h"].max()), 2)
+        low_12 = round(float(x["l"].min()), 2)
+        avg_range = round(float((x["h"] - x["l"]).mean()), 2)
+        vol_sum = round(float(x["v"].sum()), 4)
+        vol_avg = round(float(x["v"].mean()), 4)
+        # barres vertes/rouges
+        green = int((x["c"] > x["o"]).sum())
+        red   = int((x["c"] < x["o"]).sum())
+
+        lg = (x["c"] > x["o"]).astype(int)
+        lr = (x["c"] < x["o"]).astype(int)
+
+        longest_green = int(lg.groupby((lg==0).cumsum()).cumcount().add(1).max() or 0)
+        longest_red   = int(lr.groupby((lr==0).cumsum()).cumcount().add(1).max() or 0)
+        return {
+            "change_1h_pct": chg_1h, "change_3h_pct": chg_3h, "change_12h_pct": chg_12h,
+            "high_12h": high_12, "low_12h": low_12, "avg_range": avg_range,
+            "vol_sum": vol_sum, "vol_avg": vol_avg,
+            "green_bars": green, "red_bars": red,
+            "longest_green_streak": longest_green, "longest_red_streak": longest_red
+        }
+
+    # ------------------------------
+    # 1) Chargement avec warm-up
+    # ------------------------------
+    lookback = max(limit, warmup)
+    klines = client.get_klines(symbol=symbol, interval=interval, limit=lookback)
+    if not klines:
+        return {"symbol": symbol, "tf": interval, "fees_bps": 7,
+                "features": {"ohlcv_stats": {}, "hourly_snapshots": [], "stats": {}, **({"ohlcv": []} if include_ohlcv else {})}}
+
+    df_full = pd.DataFrame(klines, columns=["t","o","h","l","c","v","ct","qv","n","tbv","tbq","i"])[["t","o","h","l","c","v"]].astype(float)
+    df_full["t"] = (df_full["t"] // 1000).astype(int)
+
+    # ------------------------------
+    # 2) Indicateurs (sur warm-up)
+    # ------------------------------
+    df_full["ema20"] = df_full["c"].ewm(span=20, adjust=False).mean()
+    df_full["ema50"] = df_full["c"].ewm(span=50, adjust=False).mean()
+
+    d = df_full["c"].diff()
+    gain = d.clip(lower=0)
+    loss = -d.clip(upper=0)
     avg_gain = gain.ewm(alpha=1/14, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1/14, adjust=False).mean()
     rs = avg_gain / avg_loss
-    df["rsi14"] = 100 - (100 / (1 + rs))
+    df_full["rsi14"] = 100 - (100 / (1 + rs))
 
-    # MACD (12,26,9)
-    ema12 = df["c"].ewm(span=12, adjust=False).mean()
-    ema26 = df["c"].ewm(span=26, adjust=False).mean()
-    df["macd_line"] = ema12 - ema26
-    df["macd_signal"] = df["macd_line"].ewm(span=9, adjust=False).mean()
+    ema12 = df_full["c"].ewm(span=12, adjust=False).mean()
+    ema26 = df_full["c"].ewm(span=26, adjust=False).mean()
+    df_full["macd_line"] = ema12 - ema26
+    df_full["macd_signal"] = df_full["macd_line"].ewm(span=9, adjust=False).mean()
+    df_full["macd_hist"] = df_full["macd_line"] - df_full["macd_signal"]
 
-
-    ema20 = df["ema20"].tail(60).round(2).tolist()
-    ema50 = df["ema50"].tail(60).round(2).tolist()
-    rsi14 = df["rsi14"].tail(60).round(2).tolist()
-    macd_line = df["macd_line"].tail(60).round(3).tolist()
-    macd_signal = df["macd_signal"].tail(60).round(3).tolist()
-
-    # Compact OHLCV sur 60 dernières heures
-    ohlcv = df.tail(60).apply(
-        lambda r: {
-            "t": int(r["t"]),
-            "o": round(float(r["o"]), 2),
-            "h": round(float(r["h"]), 2),
-            "l": round(float(r["l"]), 2),
-            "c": round(float(r["c"]), 2),
-            "v": round(float(r["v"]), 4),
-        },
+    prev_c = df_full["c"].shift(1)
+    tr = pd.concat(
+        [(df_full["h"] - df_full["l"]).abs(),
+         (df_full["h"] - prev_c).abs(),
+         (df_full["l"] - prev_c).abs()],
         axis=1
-    ).tolist()
+    ).max(axis=1)
+    df_full["atr_pct"] = (tr.ewm(span=14, adjust=False).mean() / df_full["c"] * 100).round(2)
 
-    # Extraction indicateurs
-    ema20 = df["ema20"].tail(60).round(2).tolist()
-    ema50 = df["ema50"].tail(60).round(2).tolist()
-    rsi14 = df["rsi14"].tail(60).round(2).tolist()
-    macd_line = df["macd_line"].tail(60).round(3).tolist()
-    macd_signal = df["macd_signal"].tail(60).round(3).tolist()
+    # ------------------------------
+    # 3) Tronquer proprement à `limit`
+    # ------------------------------
+    df = df_full.tail(limit).copy()
+    n = len(df)
 
-    # Assemble market_data
-    market_data = {
-        "symbol": "ETHUSDC",
-        "tf": "1h",
-        "fees_bps": 7,
-        "features": {
-            "ohlcv": ohlcv,
-            "rsi14": rsi14,
-            "ema20": ema20,
-            "ema50": ema50,
-            "macd": {
-                "line": macd_line,
-                "signal": macd_signal
-            }
-        }
+    # ------------------------------
+    # 4) Blocs 'features'
+    # ------------------------------
+    # 4.a) Stats indicateurs
+    ema20_s = df["ema20"].tolist()
+    ema50_s = df["ema50"].tolist()
+    rsi_s   = df["rsi14"].tolist()
+    macd_s  = df["macd_line"].tolist()
+    sig_s   = df["macd_signal"].tolist()
+    hist_s  = df["macd_hist"].tolist()
+    atr_s   = df["atr_pct"].tolist()
+
+    stats = {
+        "ema20":  _series_stats(ema20_s),
+        "ema50":  _series_stats(ema50_s),
+        "rsi14":  _series_stats(rsi_s, rsi=True),
+        "macd": {
+            "last":        (round(macd_s[-1], 3) if macd_s else None),
+            "signal_last": (round(sig_s[-1], 3) if sig_s else None),
+            "hist_last":   (round(hist_s[-1], 3) if hist_s else None),
+            "hist_mean":   (round(float(pd.Series(hist_s).mean()), 3) if hist_s else None),
+        },
+        "atr_pct": {
+            "last": (atr_s[-1] if atr_s else None),
+            "mean": (round(float(pd.Series(atr_s).mean()), 2) if atr_s else None),
+        },
+        "h1": _h1_summary(df),
     }
 
-    return market_data
+    # 4.b) Snapshots H1 (12 barres enrichies)
+    hourly_snapshots = _pack_h1(df, n=12)
 
+    # 4.c) Synthèse OHLCV (au lieu des lignes brutes)
+    ohlcv_stats = _ohlcv_stats(df, lookback=min(12, n))
+
+    # 4.d) Optionnel: OHLCV brut pour l'UI
+    features = {
+        "ohlcv_stats": ohlcv_stats,
+        "hourly_snapshots": hourly_snapshots,
+        "stats": stats,
+    }
+    if include_ohlcv:
+        features["ohlcv"] = df.apply(
+            lambda r: {
+                "t": int(r["t"]),
+                "o": round(float(r["o"]), 2),
+                "h": round(float(r["h"]), 2),
+                "l": round(float(r["l"]), 2),
+                "c": round(float(r["c"]), 2),
+                "v": round(float(r["v"]), 4),
+            }, axis=1
+        ).tolist()
+
+    # ------------------------------
+    # 5) Assemblage final
+    # ------------------------------
+    return {
+        "symbol": symbol,
+        "tf": interval,
+        "fees_bps": 7,
+        "features": features
+    }
 
 
 def compute_performance(recent_decisions, capital_current):
@@ -153,7 +311,6 @@ def compute_performance(recent_decisions, capital_current):
         "last_24h_pnl_pct": last_24h_pnl_pct,
     }
 
-
 def atr_wilder(high, low, close, period=14):
     prev_close = close.shift(1)
     tr = pd.concat([
@@ -185,9 +342,6 @@ def rank_last_in_window(s, window=30):
     mn, mx = w.min(), w.max()
     if mx - mn < 1e-12: return 0.5
     return round(float((w.iloc[-1] - mn) / (mx - mn)), 3)
-
-
-import pandas as pd
 
 def market_state_from_metrics(ema30d_slope_pct: float, above_ema12m: bool) -> str:
     if ema30d_slope_pct > 1.0 and above_ema12m:
@@ -372,6 +526,8 @@ def update_memory_with_decision(memory: dict,
         "qty_quote": decision_dict.get("qty_quote") if qty_quote is None else qty_quote,
         "risk_check": decision_dict.get("risk_check", "ok"),
         "reason": decision_dict.get("reason", ""),
+        "next_steps": decision_dict.get("next_steps", ""),
+        "time_sleep_s": int(decision_dict.get("time_sleep_s", 0)),
         "outcome": {"closed": False},   # fermé plus tard, quand le trade est clôturé
         "note": note
     }
@@ -392,10 +548,9 @@ def update_memory_with_decision(memory: dict,
 
     return memory
 
-
-def get_decision(client_openai, payload, prompt_id='pmpt_68b048b3ba7881959eedbbed01c83b720d61d2621e7df6fb', prompt_version="5"):
+def get_decision(client_openai, payload, prompt_id='pmpt_68b048b3ba7881959eedbbed01c83b720d61d2621e7df6fb'):
     resp = client_openai.responses.create(
-        prompt={"id": prompt_id, "version": prompt_version},
+        prompt={"id": prompt_id},
         input=json.dumps(payload)
     )
     out_text = resp.output_text
@@ -404,7 +559,6 @@ def get_decision(client_openai, payload, prompt_id='pmpt_68b048b3ba7881959eedbbe
     except Exception:
         return {"error": "invalid JSON", "raw": out_text}
     
-
 def get_capital_and_balances(client: Client, INITIAL_CAPITAL_USDC=5000):
     # Prix spot USDC
     px_eth = float(client.get_symbol_ticker(symbol="ETHUSDC")["price"])
@@ -437,12 +591,24 @@ def get_capital_and_balances(client: Client, INITIAL_CAPITAL_USDC=5000):
 
     return capital, balances
 
-
-
 def execute_trade(client, decision, memory):
     pair = decision.get("pair")
     asset = decision.get("asset")
     tf = "1h"
+
+    if decision.get("decision") == "HOLD":
+        memory = update_memory_with_decision(
+        memory=memory,
+        symbol="USDCUSDT",
+        tf=tf,
+        decision_dict=decision,
+        price_usdc=float(client.get_symbol_ticker(symbol="USDCUSDT")["price"]),
+        qty_quote=0,
+        note="pre-trade decision HOLD -  Prix USDC",
+        keep_last=20
+        )
+        return memory
+
 
     # Prix/tailles
     px = float(client.get_symbol_ticker(symbol=pair)["price"])
@@ -604,7 +770,6 @@ def execute_trade(client, decision, memory):
     post_refresh_and_perf()
     return memory
 
-
 def get_future_decision(client, client_openai):
     with open("memory.json", "r") as f:
         memory = json.load(f)
@@ -646,3 +811,27 @@ def get_future_decision(client, client_openai):
     decision = get_decision(client_openai, payload)
 
     return decision
+
+def compute_max_dd_7d(capital_history, current_capital, now_ts=None):
+    import time
+    now = now_ts or int(time.time())
+    last7 = [p["capital"] for p in capital_history if p.get("timestamp",0) >= now-7*86400]
+    peak = max(last7+[current_capital]) if last7 else current_capital
+    return round(100.0*((current_capital/peak) - 1.0), 3)
+
+def snapshot_capital(memory, current_capital, now_ts=None):
+    import time
+    now = now_ts or int(time.time())
+    hist = memory.setdefault("capital_history", [])
+    # anti-doublon: 1 point max / heure
+    if not hist or now//3600 != hist[-1]["timestamp"]//3600:
+        hist.append({"timestamp": now, "capital": float(current_capital)})
+    return hist
+
+def binance_time_offset_ms(client):
+    import time
+    srv = client.get_server_time()["serverTime"]
+    offset = int(srv) - int(time.time() * 1000)
+    # Log + garde douce (pas de sleep agressif dans Airflow)
+    print(f"[TimeSync] server-local offset = {offset} ms")
+    return offset
