@@ -1,9 +1,13 @@
+import json
 from utiles import *
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
+import time
 from openai import OpenAI
 from binance.client import Client
+from airflow.hooks.base import BaseHook
+
 
 
 with DAG(
@@ -17,40 +21,44 @@ with DAG(
     ) as dag:
 
     def connexion_task(ti):
-        print("Start BotDag")
+        with open("/opt/airflow/dags/data/memory.json", "r") as f:
+            memory = json.load(f)
+    
+        dag_id = ti.dag_id
+        run_id = ti.run_id
 
-        ti.xcom_push(key="api_key", value=api_key)
-        ti.xcom_push(key="api_secret", value=api_secret)
-        ti.xcom_push(key="openai_key", value=openai_key)
+        with open(f"/opt/airflow/dags/data/memory_{dag_id}_{run_id}.json", "w") as f:
+            json.dump(memory, f, indent=2)
 
-        print("API Key, API Secret, OpenAI Key pushed to XCom")
-
+        print(f"Dag id: {dag_id}, Run id: {run_id}")
 
     def get_memory(ti):
-        api_key = ti.xcom_pull(key="api_key", task_ids="connexion_task")
-        api_secret = ti.xcom_pull(key="api_secret", task_ids="connexion_task")
-        openai_key = ti.xcom_pull(key="openai_key", task_ids="connexion_task")
-
-        client_openai = OpenAI(api_key=openai_key)
+        dag_id = ti.dag_id
+        run_id = ti.run_id
+        b = BaseHook.get_connection("binance_api")
+        api_key = b.login
+        api_secret = b.password
+        
+  
         client = Client(api_key, api_secret)
+        binance_time_offset_ms(client)
         capital_initial = 38.35
 
-        with open("memory.json", "r") as f:
+        with open(f"/opt/airflow/dags/data/memory_{dag_id}_{run_id}.json", "r") as f:
             memory = json.load(f)
-
+    
         capital, balances = get_capital_and_balances(client, INITIAL_CAPITAL_USDC=memory["capital"]["initial"])
-
-        memory["capital"] = capital
-        memory["balances"] = balances
-
         recent_decisions = memory.get("recent_decisions", [])
-
-        # 5) Performance (historique + métriques actuelles)
         performance = compute_performance(recent_decisions, capital["current"])
-
+        
+        memory["capital_history"].append({"timestamp": int(time.time()), "capital": capital["current"]})
+        memory["capital"] = capital
+        memory["capital"]["max_dd_7d"] = compute_max_dd_7d(memory.get("capital_history", []), capital["current"])
+        memory["balances"] = balances
         memory["performance"] = performance
 
-        # 2) Market data
+        snapshot_capital(memory, capital["current"])
+
         market_data = {
             "ETHUSDC": get_market_data(client, "ETHUSDC"),
             "BTCUSDC": get_market_data(client, "BTCUSDC")
@@ -59,28 +67,32 @@ with DAG(
         print("Market data fetched.")
 
         payload = {"market_data": market_data, "memory": memory}
-        ti.xcom_push(key="memory", value=memory)
+
+        with open(f"/opt/airflow/dags/data/memory_{dag_id}_{run_id}.json", "w") as f:
+            json.dump(memory, f, indent=2)
         ti.xcom_push(key="payload", value=payload)
 
-
     def decision_task(ti):
-        api_key = ti.xcom_pull(key="api_key", task_ids="connexion_task")
-        api_secret = ti.xcom_pull(key="api_secret", task_ids="connexion_task")
-        openai_key = ti.xcom_pull(key="openai_key", task_ids="connexion_task")
+        openai_key = BaseHook.get_connection("openai_default").password
 
         client_openai = OpenAI(api_key=openai_key)
+        
         payload = ti.xcom_pull(key="payload", task_ids="get_memory_task")
 
-        memory = ti.xcom_pull(key="memory", task_ids="get_memory_task")
         decision = get_decision(client_openai, payload)
         print("===================================")
         print("Décision:", decision)
         ti.xcom_push(key="decision", value=decision)
 
     def action_task(ti):
-        api_key = ti.xcom_pull(key="api_key", task_ids="connexion_task")
-        api_secret = ti.xcom_pull(key="api_secret", task_ids="connexion_task")
-        memory = ti.xcom_pull(key="memory", task_ids="get_memory_task")
+        dag_id = ti.dag_id
+        run_id = ti.run_id
+        api_key = BaseHook.get_connection("binance_api").login
+        api_secret = BaseHook.get_connection("binance_api").password
+
+        with open(f"/opt/airflow/dags/data/memory_{dag_id}_{run_id}.json", "r") as f:
+            memory = json.load(f)
+
         decision = ti.xcom_pull(key="decision", task_ids="decision_task")
         print("===================================")
 
@@ -88,27 +100,20 @@ with DAG(
 
         memory = execute_trade(client, decision, memory)
 
-        with open("memory.json", "w") as f:
+        with open("/opt/airflow/dags/data/memory.json", "w") as f:
             json.dump(memory, f, indent=2)
 
-    connexion_task = PythonOperator(
-        task_id="connexion_task",
-        python_callable=connexion_task
-    )
+        sleep_s = int(decision.get("time_sleep_s", 0))
+        if sleep_s > 0:
+            print(f"Time sleep (Décideur) : {sleep_s}s")
+            time.sleep(sleep_s)
 
-    get_memory_task = PythonOperator(
-        task_id="get_memory_task",
-        python_callable=get_memory
-    )
+    connexion_task = PythonOperator(task_id="connexion_task", python_callable=connexion_task)
 
-    decision_task = PythonOperator(
-        task_id="decision_task",
-        python_callable=decision_task
-    )
+    get_memory_task = PythonOperator(task_id="get_memory_task", python_callable=get_memory)
 
-    action_task = PythonOperator(
-        task_id="action_task",
-        python_callable=action_task
-    )
+    decision_task = PythonOperator(task_id="decision_task", python_callable=decision_task)
+
+    action_task = PythonOperator(task_id="action_task", python_callable=action_task)
 
     connexion_task >> get_memory_task >> decision_task >> action_task
