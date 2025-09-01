@@ -7,141 +7,76 @@ import numpy as np
 import math
 
 def get_market_data(client, symbol: str = "ETHUSDC", interval: str = "1h",
-                    limit: int = 12, warmup: int = 120, include_ohlcv: bool = False) -> dict:
+                    limit: int = 12, warmup: int = 120, include_ohlcv: bool = False,
+                    balances: dict | None = None, memory: dict | None = None) -> dict:
     """
-    Snapshot de marché compact et 'pensable' par un LLM.
-
-    Params
-    ------
-    client : binance.Client
-    symbol : ex. "ETHUSDC"
-    interval : ex. "1h"
-    limit : nb de barres à retourner (résultats finaux)
-    warmup : nb de barres à utiliser pour stabiliser les indicateurs
-    include_ohlcv : si True, inclut aussi l'OHLCV brut (pour la UI)
-
-    Retour
-    ------
-    {
-      "symbol": ..., "tf": interval, "fees_bps": 7,
-      "features": {
-        "ohlcv_stats": { ... },          # synthèse H1 (1h/3h/12h)
-        "hourly_snapshots": [ ... ],     # 12 barres enrichies (close/EMA/RSI/MACD/ATR)
-        "stats": {
-          "ema20"/"ema50"/"rsi14": {last,min,max,mean,slope,(above50_cnt)},
-          "macd": {last,signal_last,hist_last,hist_mean},
-          "atr_pct": {last,mean},
-          "h1": {dist_ema50_pct, hh, ll, consec_hist_pos, hist_slope_3}
-        },
-        "ohlcv": [...]  # optionnel si include_ohlcv=True
-      }
-    }
+    Snapshot de marché compact et 'pensable' par un LLM, avec enrichissement optionnel
+    de l'état de position et du sizing si `balances` et `memory` sont fournis.
     """
+    import pandas as pd, numpy as np, math
 
-
-    # ------------------------------
-    # Helpers locaux
-    # ------------------------------
+    # ---------- helpers ----------
     def _series_stats(vals, rsi=False) -> dict:
-        a = np.array([v for v in vals if v == v], dtype=float)  # drop NaN
-        if a.size == 0:
-            return {}
+        a = np.array([v for v in vals if v == v], dtype=float)
+        if a.size == 0: return {}
         x = np.arange(a.size, dtype=float)
         slope = float(np.polyfit(x, a, 1)[0]) if a.size >= 2 else 0.0
-        out = {
-            "last": round(a[-1], 2),
-            "min": round(a.min(), 2),
-            "max": round(a.max(), 2),
-            "mean": round(a.mean(), 2),
-            "slope": round(slope, 4),
-        }
-        if rsi:
-            out["above50_cnt"] = int((a > 50).sum())
+        out = {"last": round(a[-1],2), "min": round(a.min(),2), "max": round(a.max(),2),
+               "mean": round(a.mean(),2), "slope": round(slope,4)}
+        if rsi: out["above50_cnt"] = int((a>50).sum())
         return out
+
+    def _streak_pos(arr, eps=1e-9):
+        cnt = 0
+        for v in reversed(arr):
+            if v is None or (isinstance(v, float) and math.isnan(v)) or v <= eps: break
+            cnt += 1
+        return cnt
 
     def _pack_h1(df_in: pd.DataFrame, n: int = 12) -> list[dict]:
         x = df_in.tail(min(n, len(df_in))).copy()
         x["above_ema"] = (x["c"] > x["ema20"]) & (x["ema20"] > x["ema50"])
-        x["rsi_trend"] = (
-            x["rsi14"].diff().rolling(3)
-            .apply(lambda s: 1 if (s > 0).sum() >= 2 else 0)
-            .map({1: "up", 0: "down"})
-            .fillna("flat")
-        )
-        # Nettoyage/arrondis
-        out = x[[
-            "t", "c", "ema20", "ema50", "rsi14",
-            "macd_line", "macd_signal", "macd_hist",
-            "atr_pct", "above_ema", "rsi_trend"
-        ]].rename(columns={"t": "time", "c": "close", "macd_line": "macd", "macd_signal": "macd_sig"}).copy()
+        x["rsi_trend"] = (x["rsi14"].diff().rolling(3)
+                          .apply(lambda s: 1 if (s>0).sum()>=2 else 0)
+                          .map({1:"up",0:"down"}).fillna("flat"))
+        out = x[["t","c","ema20","ema50","rsi14","macd_line","macd_signal","macd_hist","atr_pct","above_ema","rsi_trend"]] \
+               .rename(columns={"t":"time","c":"close","macd_line":"macd","macd_signal":"macd_sig"}).copy()
         out["time"] = out["time"].astype(int)
-        for col, nd in [("close", 2), ("ema20", 2), ("ema50", 2), ("rsi14", 2), ("macd", 3), ("macd_sig", 3), ("macd_hist", 3)]:
+        for col, nd in [("close",2),("ema20",2),("ema50",2),("rsi14",2),("macd",3),("macd_sig",3),("macd_hist",3)]:
             out[col] = out[col].round(nd)
         return out.to_dict("records")
 
     def _h1_summary(df_in: pd.DataFrame) -> dict:
         if df_in.empty:
             return {"dist_ema50_pct": None, "hh": None, "ll": None, "consec_hist_pos": 0, "hist_slope_3": None}
-
         close = df_in["c"].values
         ema50 = df_in["ema50"].values
         hist  = (df_in["macd_line"] - df_in["macd_signal"]).tolist()
-
-        dist = round(100 * (close[-1] - ema50[-1]) / ema50[-1], 2) if ema50[-1] == ema50[-1] else None
-        hh   = round(float(df_in["h"].max()), 2)
-        ll   = round(float(df_in["l"].min()), 2)
-
-        # <<< remplace l'ancienne ligne par ces deux-là >>>
-        consec_pos   = _streak_pos(hist)
-        hist_slope_3 = round(pd.Series(hist).diff().tail(3).sum(), 3) if len(hist) >= 3 else None
-
-        return {"dist_ema50_pct": dist, "hh": hh, "ll": ll,
-                "consec_hist_pos": int(consec_pos), "hist_slope_3": hist_slope_3}
-    
-    def _streak_pos(arr, eps=1e-9):
-        cnt = 0
-        for v in reversed(arr):
-            if v is None or (isinstance(v, float) and math.isnan(v)) or v <= eps:
-                break
-            cnt += 1
-        return cnt
+        dist = round(100*(close[-1]-ema50[-1])/ema50[-1], 2) if ema50[-1]==ema50[-1] else None
+        hh, ll = round(float(df_in["h"].max()),2), round(float(df_in["l"].min()),2)
+        consec_pos = _streak_pos(hist)
+        hist_slope_3 = round(pd.Series(hist).diff().tail(3).sum(), 3) if len(hist)>=3 else None
+        return {"dist_ema50_pct": dist, "hh": hh, "ll": ll, "consec_hist_pos": int(consec_pos), "hist_slope_3": hist_slope_3}
 
     def _ohlcv_stats(df_in: pd.DataFrame, lookback: int = 12) -> dict:
         x = df_in.tail(min(lookback, len(df_in))).copy()
-        if x.empty:
-            return {}
-        # variations %
-        def pct(a, b):
-            return None if (a != a or b != b or b == 0) else round(100 * (a / b - 1), 2)
-        chg_1h = pct(x["c"].iloc[-1], x["o"].iloc[-1]) if len(x) >= 1 else None
-        chg_3h = pct(x["c"].iloc[-1], x["o"].iloc[-3]) if len(x) >= 3 else None
-        chg_12h = pct(x["c"].iloc[-1], x["o"].iloc[0]) if len(x) >= 12 else None
-        # range & volumes
-        high_12 = round(float(x["h"].max()), 2)
-        low_12 = round(float(x["l"].min()), 2)
-        avg_range = round(float((x["h"] - x["l"]).mean()), 2)
-        vol_sum = round(float(x["v"].sum()), 4)
-        vol_avg = round(float(x["v"].mean()), 4)
-        # barres vertes/rouges
-        green = int((x["c"] > x["o"]).sum())
-        red   = int((x["c"] < x["o"]).sum())
-
-        lg = (x["c"] > x["o"]).astype(int)
-        lr = (x["c"] < x["o"]).astype(int)
-
+        if x.empty: return {}
+        def pct(a,b): return None if (a!=a or b!=b or b==0) else round(100*(a/b-1),2)
+        chg_1h  = pct(x["c"].iloc[-1], x["o"].iloc[-1]) if len(x)>=1  else None
+        chg_3h  = pct(x["c"].iloc[-1], x["o"].iloc[-3]) if len(x)>=3  else None
+        chg_12h = pct(x["c"].iloc[-1], x["o"].iloc[0])  if len(x)>=12 else None
+        high_12, low_12 = round(float(x["h"].max()),2), round(float(x["l"].min()),2)
+        avg_range = round(float((x["h"]-x["l"]).mean()),2)
+        vol_sum, vol_avg = round(float(x["v"].sum()),4), round(float(x["v"].mean()),4)
+        lg, lr = (x["c"]>x["o"]).astype(int), (x["c"]<x["o"]).astype(int)
         longest_green = int(lg.groupby((lg==0).cumsum()).cumcount().add(1).max() or 0)
         longest_red   = int(lr.groupby((lr==0).cumsum()).cumcount().add(1).max() or 0)
-        return {
-            "change_1h_pct": chg_1h, "change_3h_pct": chg_3h, "change_12h_pct": chg_12h,
-            "high_12h": high_12, "low_12h": low_12, "avg_range": avg_range,
-            "vol_sum": vol_sum, "vol_avg": vol_avg,
-            "green_bars": green, "red_bars": red,
-            "longest_green_streak": longest_green, "longest_red_streak": longest_red
-        }
+        return {"change_1h_pct": chg_1h, "change_3h_pct": chg_3h, "change_12h_pct": chg_12h,
+                "high_12h": high_12, "low_12h": low_12, "avg_range": avg_range,
+                "vol_sum": vol_sum, "vol_avg": vol_avg, "green_bars": int(lg.sum()), "red_bars": int(lr.sum()),
+                "longest_green_streak": longest_green, "longest_red_streak": longest_red}
 
-    # ------------------------------
-    # 1) Chargement avec warm-up
-    # ------------------------------
+    # ---------- 1) chargement + warmup ----------
     lookback = max(limit, warmup)
     klines = client.get_klines(symbol=symbol, interval=interval, limit=lookback)
     if not klines:
@@ -151,103 +86,114 @@ def get_market_data(client, symbol: str = "ETHUSDC", interval: str = "1h",
     df_full = pd.DataFrame(klines, columns=["t","o","h","l","c","v","ct","qv","n","tbv","tbq","i"])[["t","o","h","l","c","v"]].astype(float)
     df_full["t"] = (df_full["t"] // 1000).astype(int)
 
-    # ------------------------------
-    # 2) Indicateurs (sur warm-up)
-    # ------------------------------
+    # ---------- 2) indicateurs ----------
     df_full["ema20"] = df_full["c"].ewm(span=20, adjust=False).mean()
     df_full["ema50"] = df_full["c"].ewm(span=50, adjust=False).mean()
-
-    d = df_full["c"].diff()
-    gain = d.clip(lower=0)
-    loss = -d.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1/14, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1/14, adjust=False).mean()
-    rs = avg_gain / avg_loss
-    df_full["rsi14"] = 100 - (100 / (1 + rs))
-
-    ema12 = df_full["c"].ewm(span=12, adjust=False).mean()
-    ema26 = df_full["c"].ewm(span=26, adjust=False).mean()
-    df_full["macd_line"] = ema12 - ema26
-    df_full["macd_signal"] = df_full["macd_line"].ewm(span=9, adjust=False).mean()
+    d = df_full["c"].diff(); gain = d.clip(lower=0); loss = -d.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1/14, adjust=False).mean(); avg_loss = loss.ewm(alpha=1/14, adjust=False).mean()
+    rs = avg_gain / avg_loss; df_full["rsi14"] = 100 - (100/(1+rs))
+    ema12 = df_full["c"].ewm(span=12, adjust=False).mean(); ema26 = df_full["c"].ewm(span=26, adjust=False).mean()
+    df_full["macd_line"] = ema12 - ema26; df_full["macd_signal"] = df_full["macd_line"].ewm(span=9, adjust=False).mean()
     df_full["macd_hist"] = df_full["macd_line"] - df_full["macd_signal"]
-
     prev_c = df_full["c"].shift(1)
-    tr = pd.concat(
-        [(df_full["h"] - df_full["l"]).abs(),
-         (df_full["h"] - prev_c).abs(),
-         (df_full["l"] - prev_c).abs()],
-        axis=1
-    ).max(axis=1)
-    df_full["atr_pct"] = (tr.ewm(span=14, adjust=False).mean() / df_full["c"] * 100).round(2)
+    tr = pd.concat([(df_full["h"]-df_full["l"]).abs(), (df_full["h"]-prev_c).abs(), (df_full["l"]-prev_c).abs()], axis=1).max(axis=1)
+    df_full["atr_pct"] = (tr.ewm(span=14, adjust=False).mean()/df_full["c"]*100).round(2)
 
-    # ------------------------------
-    # 3) Tronquer proprement à `limit`
-    # ------------------------------
+    # ---------- 3) tronquage ----------
     df = df_full.tail(limit).copy()
-    n = len(df)
 
-    # ------------------------------
-    # 4) Blocs 'features'
-    # ------------------------------
-    # 4.a) Stats indicateurs
-    ema20_s = df["ema20"].tolist()
-    ema50_s = df["ema50"].tolist()
-    rsi_s   = df["rsi14"].tolist()
-    macd_s  = df["macd_line"].tolist()
-    sig_s   = df["macd_signal"].tolist()
-    hist_s  = df["macd_hist"].tolist()
-    atr_s   = df["atr_pct"].tolist()
+    # ---------- 4) features tech ----------
+    ema20_s, ema50_s = df["ema20"].tolist(), df["ema50"].tolist()
+    rsi_s = df["rsi14"].tolist(); macd_s, sig_s, hist_s = df["macd_line"].tolist(), df["macd_signal"].tolist(), df["macd_hist"].tolist()
+    atr_s = df["atr_pct"].tolist()
 
     stats = {
-        "ema20":  _series_stats(ema20_s),
-        "ema50":  _series_stats(ema50_s),
-        "rsi14":  _series_stats(rsi_s, rsi=True),
-        "macd": {
-            "last":        (round(macd_s[-1], 3) if macd_s else None),
-            "signal_last": (round(sig_s[-1], 3) if sig_s else None),
-            "hist_last":   (round(hist_s[-1], 3) if hist_s else None),
-            "hist_mean":   (round(float(pd.Series(hist_s).mean()), 3) if hist_s else None),
-        },
-        "atr_pct": {
-            "last": (atr_s[-1] if atr_s else None),
-            "mean": (round(float(pd.Series(atr_s).mean()), 2) if atr_s else None),
-        },
+        "ema20": _series_stats(ema20_s), "ema50": _series_stats(ema50_s),
+        "rsi14": _series_stats(rsi_s, rsi=True),
+        "macd": {"last": (round(macd_s[-1],3) if macd_s else None),
+                 "signal_last": (round(sig_s[-1],3) if sig_s else None),
+                 "hist_last": (round(hist_s[-1],3) if hist_s else None),
+                 "hist_mean": (round(float(pd.Series(hist_s).mean()),3) if hist_s else None)},
+        "atr_pct": {"last": (atr_s[-1] if atr_s else None),
+                    "mean": (round(float(pd.Series(atr_s).mean()),2) if atr_s else None)},
         "h1": _h1_summary(df),
     }
 
-    # 4.b) Snapshots H1 (12 barres enrichies)
     hourly_snapshots = _pack_h1(df, n=12)
+    ohlcv_stats = _ohlcv_stats(df, lookback=min(12, len(df)))
 
-    # 4.c) Synthèse OHLCV (au lieu des lignes brutes)
-    ohlcv_stats = _ohlcv_stats(df, lookback=min(12, n))
-
-    # 4.d) Optionnel: OHLCV brut pour l'UI
-    features = {
-        "ohlcv_stats": ohlcv_stats,
-        "hourly_snapshots": hourly_snapshots,
-        "stats": stats,
-    }
+    features = {"ohlcv_stats": ohlcv_stats, "hourly_snapshots": hourly_snapshots, "stats": stats}
     if include_ohlcv:
-        features["ohlcv"] = df.apply(
-            lambda r: {
-                "t": int(r["t"]),
-                "o": round(float(r["o"]), 2),
-                "h": round(float(r["h"]), 2),
-                "l": round(float(r["l"]), 2),
-                "c": round(float(r["c"]), 2),
-                "v": round(float(r["v"]), 4),
-            }, axis=1
-        ).tolist()
+        features["ohlcv"] = df.apply(lambda r: {"t": int(r["t"]),
+                                                "o": round(float(r["o"]),2),
+                                                "h": round(float(r["h"]),2),
+                                                "l": round(float(r["l"]),2),
+                                                "c": round(float(r["c"]),2),
+                                                "v": round(float(r["v"]),4)}, axis=1).tolist()
 
-    # ------------------------------
-    # 5) Assemblage final
-    # ------------------------------
-    return {
-        "symbol": symbol,
-        "tf": interval,
-        "fees_bps": 7,
-        "features": features
+    # ---------- 5) enrichissement position/sizing (optionnel) ----------
+    if balances is not None and memory is not None:
+        px = float(client.get_symbol_ticker(symbol=symbol)["price"])
+        base = symbol.replace("USDC", "")
+        amt_base = float(balances.get(base, {}).get("amount", 0.0))
+        min_notional = float(memory.get("constraints", {}).get("min_notional_usdc", 5.0))
+        lot_cfg = {"ETH": float(memory.get("constraints", {}).get("lot_size_eth", 0.0001)),
+                   "BTC": float(memory.get("constraints", {}).get("lot_size_btc", 0.00001))}
+        lot_size = lot_cfg.get(base, 0.0)
+
+        usdc_free = float(balances.get("USDC", {}).get("amount", 0.0))
+        cap_cur = float(memory["capital"]["current"])
+        max_reb = float(memory.get("constraints", {}).get("max_rebalance_pct", 0.30))
+        risk_cap = memory["capital"]["current"] * memory["capital"].get("risk_per_trade_pct", 0.10)
+        cap_max = min(cap_cur*max_reb, risk_cap, usdc_free)
+        min_qty = max(lot_size, (min_notional/px))
+
+        features["position_state"] = {
+            "status": "long_spot" if amt_base > 0 else "flat",
+            "size_base": round(amt_base, 8),
+            "size_quote": round(amt_base * px, 2),
+            "px": round(px, 2),
+            "min_notional": float(min_notional),
+            "lot_size": float(lot_size),
+            "min_qty": round(min_qty, 8),
+        }
+        # on duplique un petit bloc sizing global pour que le modèle l'ait sous la main
+        features["sizing"] = {
+            "usdc_free": round(usdc_free, 2),
+            "cap_max": round(cap_max, 2),
+            "risk_cap": round(risk_cap, 2),
+            "max_rebalance_pct": max_reb,
+        }
+
+    cap_cur = float(memory["capital"]["current"])
+    max_expo = float(memory.get("constraints", {}).get("max_exposure_pct", 0.25))
+    val_base_usdc = amt_base * px
+    exposure_pct = (val_base_usdc / cap_cur) if cap_cur > 0 else 0.0
+    headroom_usdc = max(0.0, cap_cur*max_expo - val_base_usdc)
+
+    def _round_lot(q, lot):
+        # floor au pas de lot sans passer dessous min_qty quand on l'utilise
+        return math.floor(q/lot)*lot
+
+    max_buy_usdc = max(0.0, min(cap_max, headroom_usdc))
+    min_buy_usdc = float(min_notional)
+    max_buy_qty = _round_lot(max_buy_usdc/px, lot_size) if px>0 else 0.0
+    min_buy_qty = math.ceil((min_buy_usdc/px)/lot_size)*lot_size if px>0 else 0.0
+
+    max_sell_qty = _round_lot(amt_base, lot_size) if (amt_base*px)>=min_notional else 0.0
+
+    features["position_state"]["exposure_pct"] = round(exposure_pct, 4)
+    features["trade_ticket"] = {
+        "max_buy_usdc": round(max_buy_usdc, 2),
+        "min_buy_usdc": round(min_buy_usdc, 2),
+        "max_buy_qty_base": round(max_buy_qty, 8),
+        "min_buy_qty_base": round(min_buy_qty, 8),
+        "max_sell_qty_base": round(max_sell_qty, 8)
     }
+
+    # ---------- 6) retour ----------
+    return {"symbol": symbol, "tf": interval, "fees_bps": 7, "features": features}
+
 
 
 def compute_performance(recent_decisions, capital_current):
