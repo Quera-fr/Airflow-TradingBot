@@ -1,0 +1,170 @@
+{
+  "capital": {
+    "initial": 41.0,
+    "current": 61.24,
+    "max_dd_7d": -0.196,
+    "halt_if_below_50pct": true,
+    "halt_triggered": false
+  },
+  "capital_history": [
+    {
+      "timestamp": 1756731630,
+      "capital": 61.36
+    },
+    {
+      "timestamp": 1756735306,
+      "capital": 61.3
+    },
+    {
+      "timestamp": 1756738961,
+      "capital": 61.3
+    },
+    {
+      "timestamp": 1756743024,
+      "capital": 61.24
+    }
+  ],
+  "balances": {
+    "USDC": {
+      "amount": 49.632677,
+      "value_usdc": 49.63,
+      "px": 1.0
+    },
+    "ETH": {
+      "amount": 0.00162498,
+      "value_usdc": 7.09,
+      "px": 4360.21
+    },
+    "BTC": {
+      "amount": 4.151e-05,
+      "value_usdc": 4.52,
+      "px": 108920.0
+    }
+  },
+  "performance": {
+    "lookback_trades": 0,
+    "winrate": 0.0,
+    "expectancy_r": 0.0,
+    "profit_factor": 0.0,
+    "last_24h_pnl_pct": 0.0
+  },
+  "regime": {
+    "overview": {
+      "market_state": "range",
+      "volatility_rank_30d": 0.935,
+      "daily": {
+        "ret_5d_pct": -7.134,
+        "ema30d_slope_pct": 0.446,
+        "atr_rank_30d": 0.935
+      },
+      "monthly": {
+        "ret_3m_pct": 37.039,
+        "ret_6m_pct": 60.678,
+        "ret_12m_pct": 77.708,
+        "above_ema12m": true,
+        "ema12m_slope_pct": 14.332
+      }
+    },
+    "per_asset": {
+      "ETHUSDC": {
+        "market_state": "bullish",
+        "daily": {
+          "ret_5d_pct": -9.777,
+          "ema30d_slope_pct": 2.158,
+          "atr_rank_30d": 0.891
+        },
+        "monthly": {
+          "ret_3m_pct": 70.497,
+          "ret_6m_pct": 92.808,
+          "ret_12m_pct": 71.608,
+          "above_ema12m": true,
+          "ema12m_slope_pct": 15.633
+        },
+        "context": {
+          "min_30d": 3393.59,
+          "max_30d": 4830.54,
+          "mean_30d": 4221.43,
+          "avg_volume_30d": 247971.42
+        }
+      },
+      "BTCUSDC": {
+        "market_state": "range",
+        "daily": {
+          "ret_5d_pct": -4.49,
+          "ema30d_slope_pct": -1.267,
+          "atr_rank_30d": 0.979
+        },
+        "monthly": {
+          "ret_3m_pct": 3.581,
+          "ret_6m_pct": 28.549,
+          "ret_12m_pct": 83.807,
+          "above_ema12m": true,
+          "ema12m_slope_pct": 13.031
+        },
+        "context": {
+          "min_30d": 108395.42,
+          "max_30d": 123360.32,
+          "mean_30d": 115299.57,
+          "avg_volume_30d": 3959.11
+        }
+      }
+    },
+    "relative_strength": {
+      "pair": "ETHBTC",
+      "state": "eth_outperform",
+      "h1_slope_pct": -0.018,
+      "d1_slope_pct": 1.715
+    }
+  },
+  "recent_decisions": [
+    {
+      "ts": 1756741629,
+      "symbol": "USDCUSDT",
+      "pair": "ETHUSDC",
+      "asset": "USDC",
+      "tf": "1h",
+      "decision": "HOLD",
+      "confidence": 0.15,
+      "entry": "market",
+      "entry_price": 0.9998,
+      "sl": 0.0,
+      "tp": 0.0,
+      "qty_quote": 0.0,
+      "risk_check": "ok",
+      "reason": "Solde: USDC=49.63, ETH=7.11, BTC=4.52 (valeur USDC). Sur ETHUSDC, momentum H1 faible: consec_hist_pos=0 et hist_slope_3=-2.24 (MACD_hist negatif, derniere valeur -4.87), tendance baissiere: ema20.slope=-0.98, rsi14.last=41.55, dist_ema50_pct=-1.09. Sur BTCUSDC, signaux plus solides (ema20.slope positif et rsi14>50), mais pas de convergence claire (consec_hist_pos en baisse, hist_slope_3 -37.95). Regime daily: range fort, volatilite 30j elevee, drawdown max_7j -0.16% (capital fluide mais contexte range/haussier faible). Paliers_sell ETH: plus petit palier faisable techniquement est 75% (notional 5.25 USDC), non retenu strategiquement car signaux H1 divergents. Paliers_buy ETH/BTC: plus petit palier faisable est 25% (notional ETH 12.25 USDC, BTC 11.97 USDC), non retenus (absence convergence, signaux timings baissiers ou range). Risque short-term preserve capital, attendre meilleur timing.",
+      "next_steps": "Surveillance d'un retournement de momentum H1 (MACD_hist repasse positif, hist_slope_3>=2) ou cassure EMA20 a la hausse avec RSI>50 sur ETH ou BTC pour envisager un BUY (palier 25% faisable). Si dynamisme baisse ou drawdown, priorite USDC.",
+      "time_sleep_s": 3600,
+      "sizing_mode": "paliers",
+      "size_pct": 0,
+      "palier_initial": 0,
+      "palier_effectif": null,
+      "outcome": {
+        "closed": false
+      },
+      "note": "pre-trade decision",
+      "execution": {
+        "ts_exec": 1756741629,
+        "side": "SKIPPED",
+        "pair": "ETHUSDC",
+        "qty_base": 0.0,
+        "px_exec": 4373.72,
+        "reason": "HOLD/halt/risk_check/size_pct"
+      }
+    }
+  ],
+  "constraints": {
+    "max_exposure_pct": 0.75,
+    "max_rebalance_pct": 0.6,
+    "stable_symbol": "USDC",
+    "symbols": {
+      "ETHUSDC": {
+        "lot_size": 0.0001,
+        "min_notional": 5.0
+      },
+      "BTCUSDC": {
+        "lot_size": 1e-05,
+        "min_notional": 5.0
+      }
+    }
+  }
+}

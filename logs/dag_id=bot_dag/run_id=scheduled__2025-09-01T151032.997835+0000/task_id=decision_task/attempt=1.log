@@ -1,0 +1,4 @@
+{"timestamp":"2025-09-01T15:10:38.757905","level":"info","event":"DAG bundles loaded: dags-folder","logger":"airflow.dag_processing.bundles.manager.DagBundlesManager"}
+{"timestamp":"2025-09-01T15:10:38.758446","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/bot_dag.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-09-01T15:10:38.775553","level":"info","event":"Secrets backends loaded for worker","count":1,"backend_classes":["EnvironmentVariablesBackend"],"logger":"supervisor"}
+{"timestamp":"2025-09-01T15:10:38.876581","level":"info","event":"Connection Retrieved 'openai_default'","logger":"airflow.hooks.base"}

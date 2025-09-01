@@ -1,0 +1,131 @@
+{
+  "capital": {
+    "initial": 41.0,
+    "current": 61.26,
+    "max_dd_7d": -0.163,
+    "halt_if_below_50pct": true,
+    "halt_triggered": false
+  },
+  "capital_history": [
+    {
+      "timestamp": 1756731630,
+      "capital": 61.36
+    },
+    {
+      "timestamp": 1756735306,
+      "capital": 61.3
+    },
+    {
+      "timestamp": 1756738961,
+      "capital": 61.3
+    }
+  ],
+  "balances": {
+    "USDC": {
+      "amount": 49.632677,
+      "value_usdc": 49.63,
+      "px": 1.0
+    },
+    "ETH": {
+      "amount": 0.00162498,
+      "value_usdc": 7.11,
+      "px": 4374.62
+    },
+    "BTC": {
+      "amount": 4.151e-05,
+      "value_usdc": 4.52,
+      "px": 108781.65
+    }
+  },
+  "performance": {
+    "lookback_trades": 0,
+    "winrate": 0.0,
+    "expectancy_r": 0.0,
+    "profit_factor": 0.0,
+    "last_24h_pnl_pct": 0.0
+  },
+  "regime": {
+    "overview": {
+      "market_state": "range",
+      "volatility_rank_30d": 0.935,
+      "daily": {
+        "ret_5d_pct": -7.134,
+        "ema30d_slope_pct": 0.446,
+        "atr_rank_30d": 0.935
+      },
+      "monthly": {
+        "ret_3m_pct": 37.039,
+        "ret_6m_pct": 60.678,
+        "ret_12m_pct": 77.708,
+        "above_ema12m": true,
+        "ema12m_slope_pct": 14.332
+      }
+    },
+    "per_asset": {
+      "ETHUSDC": {
+        "market_state": "bullish",
+        "daily": {
+          "ret_5d_pct": -9.777,
+          "ema30d_slope_pct": 2.158,
+          "atr_rank_30d": 0.891
+        },
+        "monthly": {
+          "ret_3m_pct": 70.497,
+          "ret_6m_pct": 92.808,
+          "ret_12m_pct": 71.608,
+          "above_ema12m": true,
+          "ema12m_slope_pct": 15.633
+        },
+        "context": {
+          "min_30d": 3393.59,
+          "max_30d": 4830.54,
+          "mean_30d": 4221.43,
+          "avg_volume_30d": 247971.42
+        }
+      },
+      "BTCUSDC": {
+        "market_state": "range",
+        "daily": {
+          "ret_5d_pct": -4.49,
+          "ema30d_slope_pct": -1.267,
+          "atr_rank_30d": 0.979
+        },
+        "monthly": {
+          "ret_3m_pct": 3.581,
+          "ret_6m_pct": 28.549,
+          "ret_12m_pct": 83.807,
+          "above_ema12m": true,
+          "ema12m_slope_pct": 13.031
+        },
+        "context": {
+          "min_30d": 108395.42,
+          "max_30d": 123360.32,
+          "mean_30d": 115299.57,
+          "avg_volume_30d": 3959.11
+        }
+      }
+    },
+    "relative_strength": {
+      "pair": "ETHBTC",
+      "state": "eth_outperform",
+      "h1_slope_pct": -0.018,
+      "d1_slope_pct": 1.715
+    }
+  },
+  "recent_decisions": [],
+  "constraints": {
+    "max_exposure_pct": 0.75,
+    "max_rebalance_pct": 0.6,
+    "stable_symbol": "USDC",
+    "symbols": {
+      "ETHUSDC": {
+        "lot_size": 0.0001,
+        "min_notional": 5.0
+      },
+      "BTCUSDC": {
+        "lot_size": 1e-05,
+        "min_notional": 5.0
+      }
+    }
+  }
+}

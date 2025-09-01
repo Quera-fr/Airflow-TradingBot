@@ -1,0 +1,10 @@
+{"timestamp":"2025-09-01T12:32:33.521537","level":"info","event":"DAG bundles loaded: dags-folder","logger":"airflow.dag_processing.bundles.manager.DagBundlesManager"}
+{"timestamp":"2025-09-01T12:32:33.522324","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/bot_dag.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-09-01T12:32:33.657906Z","level":"info","event":"===================================","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T12:32:33.658316Z","level":"info","event":"Décision reçue (brève) → side=HOLD asset=USDC size_pct=None","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T12:32:33.659626","level":"info","event":"Secrets backends loaded for worker","count":1,"backend_classes":["EnvironmentVariablesBackend"],"logger":"supervisor"}
+{"timestamp":"2025-09-01T12:32:33.696721","level":"info","event":"Connection Retrieved 'binance_api'","logger":"airflow.hooks.base"}
+{"timestamp":"2025-09-01T12:32:34.190469Z","level":"info","event":"[TimeSync] server-local offset = 2295 ms","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T12:32:34.415804Z","level":"info","event":"[action_task] Erreur exécution : TypeError → skip.","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T12:32:34.454129Z","level":"info","event":"[Décideur] time_sleep_s suggéré : 1800s (aucun sleep ici ; la cadence est gérée par Airflow).","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T12:32:34.455122","level":"info","event":"Done. Returned value was: None","logger":"airflow.task.operators.airflow.providers.standard.operators.python.PythonOperator"}

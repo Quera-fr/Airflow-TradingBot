@@ -1,84 +1,44 @@
 {
   "capital": {
-    "initial": 39.07,
-    "current": 38.38,
-    "max_dd_7d": -0.052,
-    "risk_per_trade_cap": 0.1,
+    "initial": 41.0,
+    "current": 61.24,
+    "max_dd_7d": 0.0,
     "halt_if_below_50pct": true,
     "halt_triggered": false
   },
   "capital_history": [
     {
-      "timestamp": 1756576142,
-      "capital": 38.4
+      "timestamp": 1756731630,
+      "capital": 61.36
     },
     {
-      "timestamp": 1756582851,
-      "capital": 38.39
+      "timestamp": 1756735306,
+      "capital": 61.3
     },
     {
-      "timestamp": 1756583892,
-      "capital": 38.39
+      "timestamp": 1756738961,
+      "capital": 61.3
     },
     {
-      "timestamp": 1756584430,
-      "capital": 38.39
-    },
-    {
-      "timestamp": 1756585268,
-      "capital": 38.39
-    },
-    {
-      "timestamp": 1756586452,
-      "capital": 38.38
-    },
-    {
-      "timestamp": 1756589520,
-      "capital": 38.38
-    },
-    {
-      "timestamp": 1756593010,
-      "capital": 38.38
-    },
-    {
-      "timestamp": 1756622967,
-      "capital": 38.39
-    },
-    {
-      "timestamp": 1756644483,
-      "capital": 38.38
-    },
-    {
-      "timestamp": 1756646377,
-      "capital": 38.38
-    },
-    {
-      "timestamp": 1756649820,
-      "capital": 38.37
-    },
-    {
-      "timestamp": 1756650483,
-      "capital": 38.38
-    },
-    {
-      "timestamp": 1756651370,
-      "capital": 38.38
+      "timestamp": 1756743024,
+      "capital": 61.24
     }
   ],
   "balances": {
     "USDC": {
-      "amount": 33.741354,
-      "value_usdc": 33.74
+      "amount": 49.632677,
+      "value_usdc": 49.63,
+      "px": 1.0
     },
     "ETH": {
-      "amount": 2.802e-05,
-      "value_usdc": 0.13,
-      "px": 4462.14
+      "amount": 0.00162498,
+      "value_usdc": 7.09,
+      "px": 4360.4
     },
     "BTC": {
-      "amount": 4.161e-05,
-      "value_usdc": 4.51,
-      "px": 108460.01
+      "amount": 4.151e-05,
+      "value_usdc": 4.52,
+      "px": 108898.0
     }
   },
   "performance": {
@@ -158,493 +118,77 @@
   },
   "recent_decisions": [
     {
-      "ts": 1756501481,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.72,
-      "entry": "market",
-      "entry_price": 4318.69,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0.0,
-      "risk_check": "ok",
-      "reason": "Trend 1h toujours baissier sur ETH et BTC (prix < EMA20/50). ETH montre un d\u00e9but de rebond (MACD ligne > signal, RSI14 remonte) mais signaux insuffisants et volatilit\u00e9 \u00e9lev\u00e9e. Expositions r\u00e9siduelles trop petites pour vendre (sous min_notional). On privil\u00e9gie USDC et la prudence.",
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756501481,
-        "side": "SKIPPED",
-        "pair": "ETHUSDC",
-        "qty_base": 0.0,
-        "px_exec": 4318.69,
-        "reason": "HOLD/halt/risk_check"
-      }
-    },
-    {
-      "ts": 1756546685,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "BUY",
-      "confidence": 0.57,
-      "entry": "market",
-      "entry_price": 4387.0,
-      "sl": 4330.0,
-      "tp": 4488.0,
-      "qty_quote": 9.2127,
-      "risk_check": "ok",
-      "reason": "Convergence haussi\u00e8re mod\u00e9r\u00e9e sur 1h: prix > EMA20 (mais < EMA50), MACD ligne > signal, RSI14 \u224853 et ETH surperforme BTC. Volatilit\u00e9 \u00e9lev\u00e9e \u2192 taille r\u00e9duite. Achat \u22489.24 USDC (<30% du capital et \u2265min_notional), exposition ETH \u224824% (<25% max_exposure). Risque \u00e0 SL << 10% du capital.",
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756546685,
-        "side": "BUY",
-        "pair": "ETHUSDC",
-        "qty_base": 0.002,
-        "px_exec": 4387.0,
-        "order_id": 6759540828,
-        "executed_qty": 0.002,
-        "cummulative_quote_qty": 8.77402
-      }
-    },
-    {
-      "ts": 1756546753,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.68,
-      "entry": "market",
-      "entry_price": 4388.99,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0.0,
-      "risk_check": "ok",
-      "reason": "Signaux mitig\u00e9s: ETH rebond technique (prix > EMA20, MACD ligne > signal, RSI\u224851) mais toujours < EMA50 et volatilit\u00e9 \u00e9lev\u00e9e; BTC plus faible (prix < EMA20/50, RSI\u224843). Exposition ETH \u224823% d\u00e9j\u00e0 proche du plafond 25% et BTC < min_notional pour all\u00e9ger. Pas de convergence forte justifiant un BUY/SELL sans d\u00e9passer contraintes \u2192 prudence en USDC.",
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756546753,
-        "side": "SKIPPED",
-        "pair": "ETHUSDC",
-        "qty_base": 0.0,
-        "px_exec": 4388.99,
-        "reason": "HOLD/halt/risk_check"
-      }
-    },
-    {
-      "ts": 1756550353,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.67,
-      "entry": "market",
-      "entry_price": 4389.27,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0.0,
-      "risk_check": "ok",
-      "reason": "Signaux mitig\u00e9s: ETH > EMA20 mais < EMA50, MACD ligne > signal, RSI\u224852; BTC < EMA20/50 avec RSI<45. Volatilit\u00e9 \u00e9lev\u00e9e. Exposition ETH \u224823% d\u00e9j\u00e0 proche du plafond 25% (achat >5 USDC d\u00e9passerait la limite) et BTC < min_notional pour all\u00e9ger. Sans convergence forte, on privil\u00e9gie USDC.",
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756550353,
-        "side": "SKIPPED",
-        "pair": "ETHUSDC",
-        "qty_base": 0.0,
-        "px_exec": 4389.27,
-        "reason": "HOLD/halt/risk_check"
-      }
-    },
-    {
-      "ts": 1756557560,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.63,
-      "entry": "market",
-      "entry_price": 4355.37,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0.0,
-      "risk_check": "ok",
-      "reason": "Signaux mitig\u00e9s: ETH et BTC sous EMA20/EMA50 (tendance 1h encore fragile), RSI<50; MACD ligne > signal (am\u00e9lioration mais non confirm\u00e9e). Volatilit\u00e9 30d \u00e9lev\u00e9e. ETH \u224823% du portefeuille (proche plafond 25%), BTC < min_notional pour all\u00e9ger. Sans convergence claire, on privil\u00e9gie la prudence en USDC.",
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756557560,
-        "side": "SKIPPED",
-        "pair": "ETHUSDC",
-        "qty_base": 0.0,
-        "px_exec": 4355.37,
-        "reason": "HOLD/halt/risk_check"
-      }
-    },
-    {
-      "ts": 1756557628,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.66,
-      "entry": "market",
-      "entry_price": 4355.31,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0.0,
-      "risk_check": "ok",
-      "reason": "Signaux 1h mitig\u00e9s sur ETH et BTC: prix < EMA20/50 et RSI<50, mais MACD ligne > signal (rebond fragile); volatilit\u00e9 \u00e9lev\u00e9e et march\u00e9 en range. Exposition actuelle prudente (USDC majoritaire, ETH ~23% \u226425%, BTC < min_notional), donc pas d\u2019action sans convergence claire.",
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756557628,
-        "side": "SKIPPED",
-        "pair": "ETHUSDC",
-        "qty_base": 0.0,
-        "px_exec": 4355.31,
-        "reason": "HOLD/halt/risk_check"
-      }
-    },
-    {
-      "ts": 1756576204,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "SELL",
-      "confidence": 0.62,
-      "entry": "market",
-      "entry_price": 4358.39,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 8.71678,
-      "risk_check": "ok",
-      "reason": "R\u00e9duction de risque: sur 1h ETH reste sous EMA20/EMA50 et RSI14<50; MACD encore <0 (malgr\u00e9 ligne>signal) dans un march\u00e9 range \u00e0 forte volatilit\u00e9. On privil\u00e9gie USDC et on all\u00e8ge l\u2019exposition ETH. Vente \u226430% du capital, \u2265min_notional et lot size respect\u00e9.",
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756576204,
-        "side": "SELL",
-        "pair": "ETHUSDC",
-        "qty_base": 0.002,
-        "px_exec": 4358.39,
-        "order_id": 6762693371,
-        "executed_qty": 0.002,
-        "cummulative_quote_qty": 8.71638
-      }
-    },
-    {
-      "ts": 1756582927,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.7,
-      "entry": "market",
-      "entry_price": 4354.45,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0.0,
-      "risk_check": "ok",
-      "reason": "Pas de convergence suffisante: ETH < EMA20/EMA50 (RSI\u224844, MACD ligne > signal mais <0). BTC > EMA20 mais < EMA50 (RSI\u224849, MACD ligne > signal <0). Volatilit\u00e9 30j \u00e9lev\u00e9e. Portefeuille majoritairement en USDC; BTC r\u00e9siduel < min_notional donc non vendable. Pour respecter le DD max (-5%/7j), on privil\u00e9gie l\u2019attente.",
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756582927,
-        "side": "SKIPPED",
-        "pair": "ETHUSDC",
-        "qty_base": 0.0,
-        "px_exec": 4354.45,
-        "reason": "HOLD/halt/risk_check"
-      }
-    },
-    {
-      "ts": 1756583940,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.76,
-      "entry": "market",
-      "entry_price": 4355.0,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0.0,
-      "risk_check": "ok",
-      "reason": "March\u00e9 1h incertain et volatil: ETH sous EMA20/EMA50 (RSI14\u224844, MACD<0 mais ligne>signal), BTC >EMA20 mais <EMA50 (RSI<50, MACD<0). Pas de convergence multi-indicateurs \u2192 pas d\u2019achat/vente. Expositions r\u00e9siduelles ETH/BTC < min_notional (5 USDC) donc pas d\u2019all\u00e8gement possible sans violer MIN_NOTIONAL. Capital en l\u00e9ger repli, priorit\u00e9 \u00e0 USDC pour pr\u00e9server le drawdown.",
-      "next_steps": "Surveillance 1\u20132 tours: (1) Achat ETH si cl\u00f4ture > EMA50 1h avec RSI>50 et MACD>0; taille \u226430% du capital et expo \u226425%. (2) Si ETH casse 4330 avec RSI<40 et MACD se retourne, rester 100% USDC. (3) Si BTC reprend EMA50 avec RSI>50, envisager une petite allocation BTC sous les m\u00eames contraintes.",
-      "time_sleep_s": 3600,
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756583940,
-        "side": "SKIPPED",
-        "pair": "ETHUSDC",
-        "qty_base": 0.0,
-        "px_exec": 4355.0,
-        "reason": "HOLD/halt/risk_check"
-      }
-    },
-    {
-      "ts": 1756584495,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.78,
-      "entry": "market",
-      "entry_price": 4353.39,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0.0,
-      "risk_check": "ok",
-      "reason": "Pas de convergence multi-indicateurs: ETH < EMA20/EMA50, RSI14\u224846, MACD ligne < signal < 0 (biais baissier). BTC > EMA20 mais < EMA50, MACD ligne > signal mais < 0, RSI\u224850 (rebond fragile). Volatilit\u00e9 30j \u00e9lev\u00e9e; capital en l\u00e9ger repli \u2192 prudence. Expositions r\u00e9siduelles ETH (~0.12 USDC) et BTC (~4.53 USDC) < min_notional (5 USDC), donc pas d\u2019all\u00e8gement possible sans violer MIN_NOTIONAL. On reste majoritairement en USDC pour pr\u00e9server le drawdown.",
-      "next_steps": "Acheter ETH si cl\u00f4ture 1h > EMA50 avec RSI>50 et MACD>0, taille \u226430% du capital et expo totale ETH \u226425%, SL sous le dernier creux/EMA20. Sinon, si ETH casse 4330 avec RSI<40 et MACD se d\u00e9grade, rester en USDC (pas de vente possible sous min_notional). Pour BTC, envisager un achat seulement si >EMA50 avec RSI>50 et MACD>0, m\u00eame contraintes de taille.",
-      "time_sleep_s": 0,
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756584495,
-        "side": "SKIPPED",
-        "pair": "ETHUSDC",
-        "qty_base": 0.0,
-        "px_exec": 4353.39,
-        "reason": "HOLD/halt/risk_check"
-      }
-    },
-    {
-      "ts": 1756585308,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.78,
-      "entry": "market",
-      "entry_price": 4342.88,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0.0,
-      "risk_check": "ok",
-      "reason": "Pas de convergence: ETH < EMA20/EMA50, RSI14<50, MACD ligne < signal < 0; BTC aussi sous EMA50 (MACD<0). Volatilit\u00e9 30j \u00e9lev\u00e9e \u2192 priorit\u00e9 \u00e0 USDC. Expositions r\u00e9siduelles ETH (~0.12 USDC) et BTC (~4.52 USDC) < min_notional (5 USDC), donc pas d\u2019all\u00e8gement possible sans violer les contraintes.",
-      "next_steps": "Acheter ETH si cl\u00f4ture 1h > EMA50 avec RSI>50 et MACD>0 (taille \u226430% du capital, expo ETH \u226425%, SL sous dernier creux). Si ETH casse 4330 avec RSI<40/MACD se d\u00e9grade, rester 100% USDC. BTC: n\u2019envisager un achat que >EMA50 avec RSI>50 et MACD>0.",
-      "time_sleep_s": 0,
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756585308,
-        "side": "SKIPPED",
-        "pair": "ETHUSDC",
-        "qty_base": 0.0,
-        "px_exec": 4342.88,
-        "reason": "HOLD/halt/risk_check"
-      }
-    },
-    {
-      "ts": 1756586506,
-      "symbol": "ETHUSDC",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.78,
-      "entry": "market",
-      "entry_price": 4341.77,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0.0,
-      "risk_check": "ok",
-      "reason": "Pas de convergence haussi\u00e8re: ETH sous EMA20/EMA50, RSI14\u224844, MACD ligne<signal<0; BTC aussi sous EMA20/EMA50 avec MACD<0. Volatilit\u00e9 \u00e9lev\u00e9e \u2192 priorit\u00e9 USDC. Les positions r\u00e9siduelles ETH (~0.12 USDC) et BTC (~4.52 USDC) sont < min_notional (5 USDC), donc aucune vente possible sans violer les contraintes.",
-      "next_steps": "Achat ETH si cl\u00f4ture 1h > EMA50 (~4397) avec RSI>50 et MACD>0, taille \u226430% du capital et expo ETH \u226425%, SL sous le dernier creux (~4330). Sinon, si ETH casse <4330 avec RSI<40 et MACD se d\u00e9grade, rester en USDC. Pour BTC, envisager un achat seulement si >EMA50 (~109474) avec RSI>50 et MACD>0.",
-      "time_sleep_s": 0,
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision",
-      "execution": {
-        "ts_exec": 1756586506,
-        "side": "SKIPPED",
-        "pair": "ETHUSDC",
-        "qty_base": 0.0,
-        "px_exec": 4341.77,
-        "reason": "HOLD/halt/risk_check"
-      }
-    },
-    {
-      "ts": 1756589535,
+      "ts": 1756741629,
       "symbol": "USDCUSDT",
+      "pair": "ETHUSDC",
+      "asset": "USDC",
       "tf": "1h",
       "decision": "HOLD",
-      "confidence": 0.79,
+      "confidence": 0.15,
       "entry": "market",
       "entry_price": 0.9998,
       "sl": 0.0,
       "tp": 0.0,
-      "qty_quote": 0,
+      "qty_quote": 0.0,
       "risk_check": "ok",
-      "reason": "Pas de convergence multi-indicateurs. ETH et BTC sous EMA20/EMA50 (bearish court terme), RSI14<50, MACD ligne < signal < 0 sur 1h. Volatilit\u00e9 toujours \u00e9lev\u00e9e (ATR, volatility_rank>0.9). Les positions r\u00e9siduelles (ETH ~0.12 USDC, BTC ~4.52 USDC) < min_notional (5 USDC) donc aucune op\u00e9ration possible sans violer les contraintes. Drawdown 7j touche \u22125%, hausse de prudence impos\u00e9e : priorit\u00e9 au cash, attente d'un signal fort pour r\u00e9investir. Les fen\u00eatres d'achat valid\u00e9es pr\u00e9c\u00e9demment (cl\u00f4ture >EMA50, RSI>50, MACD>0) ne sont pas r\u00e9alis\u00e9es.",
-      "next_steps": "Surveillance : (1) Achat ETH si cl\u00f4ture 1h > EMA50 (~4398) avec RSI>50/MACD>0, taille \u226430% du capital et expo totale ETH \u226425%. (2) Rester 100% USDC si ETH casse 4330 avec RSI<40/MACD d\u00e9grad\u00e9. Pour BTC, acheter seulement si >EMA50 et RSI>50/MACD>0. Ajuster seulement si positions \u2265 min_notional.",
+      "reason": "Solde: USDC=49.63, ETH=7.11, BTC=4.52 (valeur USDC). Sur ETHUSDC, momentum H1 faible: consec_hist_pos=0 et hist_slope_3=-2.24 (MACD_hist negatif, derniere valeur -4.87), tendance baissiere: ema20.slope=-0.98, rsi14.last=41.55, dist_ema50_pct=-1.09. Sur BTCUSDC, signaux plus solides (ema20.slope positif et rsi14>50), mais pas de convergence claire (consec_hist_pos en baisse, hist_slope_3 -37.95). Regime daily: range fort, volatilite 30j elevee, drawdown max_7j -0.16% (capital fluide mais contexte range/haussier faible). Paliers_sell ETH: plus petit palier faisable techniquement est 75% (notional 5.25 USDC), non retenu strategiquement car signaux H1 divergents. Paliers_buy ETH/BTC: plus petit palier faisable est 25% (notional ETH 12.25 USDC, BTC 11.97 USDC), non retenus (absence convergence, signaux timings baissiers ou range). Risque short-term preserve capital, attendre meilleur timing.",
+      "next_steps": "Surveillance d'un retournement de momentum H1 (MACD_hist repasse positif, hist_slope_3>=2) ou cassure EMA20 a la hausse avec RSI>50 sur ETH ou BTC pour envisager un BUY (palier 25% faisable). Si dynamisme baisse ou drawdown, priorite USDC.",
       "time_sleep_s": 3600,
+      "sizing_mode": "paliers",
+      "size_pct": 0,
+      "palier_initial": 0,
+      "palier_effectif": null,
       "outcome": {
         "closed": false
       },
-      "note": "pre-trade decision HOLD -  Prix USDC"
+      "note": "pre-trade decision",
+      "execution": {
+        "ts_exec": 1756741629,
+        "side": "SKIPPED",
+        "pair": "ETHUSDC",
+        "qty_base": 0.0,
+        "px_exec": 4373.72,
+        "reason": "HOLD/halt/risk_check/size_pct"
+      }
     },
     {
-      "ts": 1756593022,
+      "ts": 1756743043,
       "symbol": "USDCUSDT",
+      "pair": "ETHUSDC",
+      "asset": "USDC",
       "tf": "1h",
       "decision": "HOLD",
-      "confidence": 0.81,
+      "confidence": 0.15,
       "entry": "market",
       "entry_price": 0.9999,
       "sl": 0.0,
       "tp": 0.0,
-      "qty_quote": 0,
+      "qty_quote": 0.0,
       "risk_check": "ok",
-      "reason": "Aucune convergence multi-indicateurs sur ETH ou BTC : tous deux sous EMA20/EMA50, MACD < 0, RSI14<50, volatilit\u00e9 30j extr\u00eame (volatility_rank 0.93, drawdown 7j \u00e0 -5.2%). Expositions r\u00e9siduelles tr\u00e8s faibles (< min_notional), aucune op\u00e9ration possible sans violer les contraintes. Contexte de drawdown proche du max autoris\u00e9 : priorit\u00e9 \u00e0 la pr\u00e9servation du capital majoritairement en USDC. Prendre une d\u00e9cision active (BUY/SELL) n\u00e9cessiterait un signal fort et conformit\u00e9 notional/lot size, ce qui n'est pas le cas \u00e0 cet instant.",
-      "next_steps": "Si ETH cl\u00f4ture > EMA50 (~4394.7) avec RSI>50 et MACD>0, envisager un BUY small size, expo totale ETH \u226425%. Si ETH casse 4330 avec RSI<40/MACD<0, rester full USDC. Re-\u00e9valuer aussi BTC si >EMA50+RSI>50+MACD>0.",
+      "reason": "Solde: USDC=49.63, ETH=7.09, BTC=4.52 (valeurs USDC). Sur ETHUSDC, momentum H1 faible: consec_hist_pos=0, hist_slope_3=-2.70, MACD_hist -6.60; tendance baissiere: ema20.slope=-1.51, dist_ema50_pct=-1.35, rsi14.last=39.49, below 50. Sur BTCUSDC, momentum H1: consec_hist_pos=10 mais hist_slope_3=-43.45 (MACD_hist positif mais en fort reflux); tendance neutre: ema20.slope=+42, dist_ema50_pct=+0.06, rsi14=52.16. Contexte daily range/haussier faible, regime ETHUSDC: daily -9.77% sur 5j, btc range. Drawdown max_7j faible (-0.2%), capital stable. Paliers buy ETH/BTC: plus petit palier faisable est 25% (ETH 12.21 USDC, BTC 11.98 USDC), faisables techniquement mais non retenus strategiquement (pas convergence MACD/EMA/RSI sur H1-H4, risk/reward faible). Aucun palier sell ETH faisable inferieur au 75% (ETH notional 5.23), qui n'est pas retenu (pas de signaux d'alerte, faible taille/expo). Etant donne le manque total de convergence et le regime range/dynamique incertains, prudence et attente. Triggers: (1) MACD_hist H1 repasse positif et hist_slope_3 >= 2 sur ETH ou BTC, (2) cassure EMA20 a la hausse + RSI H1 > 50.",
+      "next_steps": "Surveiller un retournement positif momentum H1 (MACD_hist, hist_slope_3 >= 2, RSI > 50, cassure EMA20) sur ETH ou BTC pour ouvrir un BUY palier 25%. Rester 100% USDC si volatilite ou signaux negatifs persistent.",
       "time_sleep_s": 3600,
+      "sizing_mode": "paliers",
+      "size_pct": 0,
+      "palier_initial": 0,
+      "palier_effectif": null,
       "outcome": {
         "closed": false
       },
-      "note": "pre-trade decision HOLD -  Prix USDC"
-    },
-    {
-      "ts": 1756622983,
-      "symbol": "USDCUSDT",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.82,
-      "entry": "market",
-      "entry_price": 0.9998,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0,
-      "risk_check": "ok",
-      "reason": "Toujours aucune convergence multi-indicateurs sur ETH ou BTC\u00a0: prix sous EMA20/50, MACD<0, RSI14<50, volatilit\u00e9 30j tr\u00e8s \u00e9lev\u00e9e et drawdown 7j proche du maximum tol\u00e9r\u00e9 (-2.6%). Expositions r\u00e9siduelles ETH (~0.12 USDC) et BTC (~4.52 USDC) bien < min_notional (5 USDC), donc aucune op\u00e9ration possible sans violer les contraintes de taille. Capitale global en l\u00e9ger repli\u00a0: priorit\u00e9 USDC, attente d\u2019un vrai signal de retournement + conformit\u00e9 notional/lot size.",
-      "next_steps": "Observation active : (1) Acheter ETH uniquement si cl\u00f4ture 1h > EMA50 (~4412) avec RSI>50 et MACD>0 (taille \u226430% du capital, mixt ETH total <25%). (2) Rester full USDC si ETH casse <4330 avec RSI<40 & MACD<0. R\u00e9\u00e9valuer BTC si franchit EMA50, RSI>50, MACD>0, et notional possible.",
-      "time_sleep_s": 3600,
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision HOLD -  Prix USDC"
-    },
-    {
-      "ts": 1756644498,
-      "symbol": "USDCUSDT",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.82,
-      "entry": "market",
-      "entry_price": 0.9998,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0,
-      "risk_check": "ok",
-      "reason": "Toujours aucune convergence multi-indicateurs sur ETH ou BTC : prix sous EMA20/50, MACD<0, RSI14<50. Volatilit\u00e9 30j tr\u00e8s \u00e9lev\u00e9e et drawdown 7j au seuil max tol\u00e9r\u00e9 (-5.2%). Expositions r\u00e9siduelles ETH/BTC bien < min_notional (5 USDC), donc aucune op\u00e9ration possible sans violer les contraintes. Privil\u00e9gier USDC pour pr\u00e9server l\u2019\u00e9quity tant qu\u2019un vrai signal de retournement et les conditions de taille ne sont pas r\u00e9unis.",
-      "next_steps": "Attente active\u00a0: (1) Acheter ETH si cl\u00f4ture 1h > EMA50 (~4437) avec RSI>50 et MACD>0, taille \u226430% du capital et seuil min_notional/lot_size respect\u00e9s. (2) Rester full USDC si ETH casse <4330 avec RSI<40 & MACD<0. (3) M\u00eame strat\u00e9gie sur BTC si breakout EMA50, RSI>50, MACD>0 et notional possible.",
-      "time_sleep_s": 3600,
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision HOLD -  Prix USDC"
-    },
-    {
-      "ts": 1756646394,
-      "symbol": "USDCUSDT",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.83,
-      "entry": "market",
-      "entry_price": 0.9997,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0,
-      "risk_check": "ok",
-      "reason": "Aucune convergence haussi\u00e8re ou baissi\u00e8re sur ETH ou BTC\u00a0: tous deux restent sous EMA20/EMA50, MACD<0, RSI14<50 et la volatilit\u00e9 30j demeure extr\u00eame (ATR_rank>0.9, drawdown 7j \u00e0 \u22125.2% maxi tol\u00e9r\u00e9, capital toujours en repli). Les expositions r\u00e9siduelles (ETH ~0.13 USDC, BTC ~4.5 USDC) sont bien inf\u00e9rieures au min_notional (5 USDC), emp\u00eachant tout Buy/Sell sans violation de contraintes strictes. Privil\u00e9gier la pr\u00e9servation (USDC majoritaire) en attente d'un retournement valid\u00e9 (signal fort + respect min_notional).",
-      "next_steps": "Acheter ETH uniquement si cl\u00f4ture 1h > EMA50 (~4443) avec RSI>50 & MACD>0, taille <=30% du capital si min_notional/lot_size ok. M\u00eame approche BTC si >EMA50/RSI>50/MACD>0. Rester full USDC si ETH casse 4330 avec RSI<40/MACD<0. Surveillance active de la volatilit\u00e9 et du drawdown\u2009: privil\u00e9gier USDC tant que conditions non remplies.",
-      "time_sleep_s": 3600,
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision HOLD -  Prix USDC"
-    },
-    {
-      "ts": 1756649836,
-      "symbol": "USDCUSDT",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.83,
-      "entry": "market",
-      "entry_price": 0.9998,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0,
-      "risk_check": "ok",
-      "reason": "Aucune convergence haussi\u00e8re ni baissi\u00e8re sur ETH ou BTC\u00a0: les deux restent sous EMA20/EMA50 sur 1h, MACD<0, RSI14<50. Volatilit\u00e9 30j toujours extr\u00eame (ATR_rank~0.93) et drawdown 7j \u00e0 -5.2%, soit au plafond tol\u00e9r\u00e9. Le capital est stable mais en repli r\u00e9cent (prudence impos\u00e9e). Les expositions r\u00e9siduelles ETH (~0.13 USDC) et BTC (~4.5 USDC) sont tr\u00e8s inf\u00e9rieures au min_notional (5 USDC), rendant tout r\u00e9ajustement impossible sans violer les contraintes. Attente stricte d'un vrai signal fort haussier (cl\u00f4ture >EMA50 1h + RSI>50+MACD>0) sur ETH ou BTC pour agir.",
-      "next_steps": "Si ETH cl\u00f4ture > EMA50 (~4443) avec RSI>50+MACD>0 et si min_notional est atteignable (ordre ~0.0011 ETH), alors BUY ETH par tranche \u226430% du capital mais max 25% d'expo. M\u00eame filtre pour BTC. Si ETH casse <4330/RSI<40/MACD<0, rester full USDC. Surveillance active\u00a0; agir seulement si les contraintes de risk/size sont respect\u00e9es.",
-      "time_sleep_s": 3600,
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision HOLD -  Prix USDC"
-    },
-    {
-      "ts": 1756650497,
-      "symbol": "USDCUSDT",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.83,
-      "entry": "market",
-      "entry_price": 0.9998,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0,
-      "risk_check": "ok",
-      "reason": "Aucune convergence multi-indicateurs valide sur 1h pour ETH ou BTC : ETH > EMA20/EMA50 avec MACD>signal, RSI>50 et force relative contre BTC, mais les expositions r\u00e9siduelles (ETH~0.13 USDC, BTC~4.5 USDC) sont bien inf\u00e9rieures au min_notional de 5 USDC. Volatilit\u00e9 30j extr\u00eame, drawdown 7j touche le niveau max tol\u00e9r\u00e9 (-5.2%), \u00e9quity toujours en repli. Toute action BUY/SELL violerait notional/lot size. Privil\u00e9gier USDC pour pr\u00e9server le capital tant qu\u2019aucune fen\u00eatre haussi\u00e8re claire ET taille minimum atteinte n\u2019est r\u00e9unie.",
-      "next_steps": "Monitorer 1 tour : BUY ETH uniquement si cl\u00f4ture > EMA50 1h (actuel ~4444) avec RSI>50, MACD>0, et taille d'ordre r\u00e9aliste (>0.0011 ETH) pour atteindre min_notional. M\u00eame logique pour BTC. Rester full USDC si volatilit\u00e9 reste extr\u00eame ou si un nouveau creux (<4330 ETH) est franchi avec RSI<40/MACD<0.",
-      "time_sleep_s": 3600,
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision HOLD -  Prix USDC"
-    },
-    {
-      "ts": 1756651384,
-      "symbol": "USDCUSDT",
-      "tf": "1h",
-      "decision": "HOLD",
-      "confidence": 0.83,
-      "entry": "market",
-      "entry_price": 0.9998,
-      "sl": 0.0,
-      "tp": 0.0,
-      "qty_quote": 0,
-      "risk_check": "ok",
-      "reason": "Toujours aucune convergence exploitable\u202f: 1/ Sur ETH, momentum 1h s\u2019essouffle (consec_hist_pos=12 \u2192 MACD_hist ralenti \u00e0 1.05, hist_slope_3=-2.92), rsi14 baisse (56.43), tendance haussi\u00e8re moins franche (ema20/50 slope faiblit, dist_ema50_pct=0.84%, dernier close < ema20), volatilit\u00e9 stable (atr_pct.last=0.66\u2248moyenne). 2/ BTC reste sous pression (consec_hist_pos=0, hist_slope_3=-6.3, rsi14=43.28), trend n\u00e9gatif (EMA20/EMA50 slope <0, MACD_hist n\u00e9gatif). 3/ Drawdown 7j reste au MAX tol\u00e9r\u00e9 (-5.2%), imposant prudence (\u00e9quity en repli stable, pas de nouvelle fen\u00eatre pour trade exploratoire). 4/ Expositions r\u00e9siduelles ETH/BTC << min_notional (0.13/4.5 USDC vs 5 USDC requis), rebalance impossible sans violer contraintes. 5/ Contexte march\u00e9 en range avec volatilit\u00e9 \u00e9lev\u00e9e (vol rank30d~0.93).",
-      "next_steps": "Monitorer encore 1 tour\u202f: BUY ETH uniquement si prix > EMA50 1h (actuel 4444), RSI>50, MACD>0, et ordre >0.0011 ETH/5 USDC sans d\u00e9passer 25% d\u2019expo; idem BTC si >EMA50/RSI>50/MACD>0 mais notional possible. Si ETH recasse 4330 en force (RSI<40, MACD<0), rester int\u00e9gralement USDC. Surveillance active de la volatilit\u00e9/drawdown.",
-      "time_sleep_s": 3600,
-      "outcome": {
-        "closed": false
-      },
-      "note": "pre-trade decision HOLD -  Prix USDC"
+      "note": "pre-trade decision",
+      "execution": {
+        "ts_exec": 1756743043,
+        "side": "SKIPPED",
+        "pair": "ETHUSDC",
+        "qty_base": 0.0,
+        "px_exec": 4360.11,
+        "reason": "HOLD/halt/risk_check/size_pct"
+      }
     }
   ],
   "constraints": {
-    "max_exposure_pct": 0.25,
-    "max_rebalance_pct": 0.3,
+    "max_exposure_pct": 0.75,
+    "max_rebalance_pct": 0.6,
     "stable_symbol": "USDC",
     "symbols": {
       "ETHUSDC": {

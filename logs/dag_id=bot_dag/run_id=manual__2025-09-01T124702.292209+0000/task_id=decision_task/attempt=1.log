@@ -1,0 +1,7 @@
+{"timestamp":"2025-09-01T12:47:07.514057","level":"info","event":"DAG bundles loaded: dags-folder","logger":"airflow.dag_processing.bundles.manager.DagBundlesManager"}
+{"timestamp":"2025-09-01T12:47:07.514627","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/bot_dag.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-09-01T12:47:07.534729","level":"info","event":"Secrets backends loaded for worker","count":1,"backend_classes":["EnvironmentVariablesBackend"],"logger":"supervisor"}
+{"timestamp":"2025-09-01T12:47:07.661608","level":"info","event":"Connection Retrieved 'openai_default'","logger":"airflow.hooks.base"}
+{"timestamp":"2025-09-01T12:47:22.135411Z","level":"info","event":"===================================","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T12:47:22.135748Z","level":"info","event":"Décision : {'decision': 'HOLD', 'asset': 'USDC', 'pair': 'ETHUSDC', 'confidence': 0.0, 'entry': 'market', 'sl': 0.0, 'tp': 0.0, 'qty_base': 0.0, 'risk_check': 'ok', 'reason': '', 'next_steps': '', 'time_sleep_s': 1800, 'sizing_mode': 'paliers', 'size_pct': None}","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T12:47:22.136000","level":"info","event":"Done. Returned value was: None","logger":"airflow.task.operators.airflow.providers.standard.operators.python.PythonOperator"}

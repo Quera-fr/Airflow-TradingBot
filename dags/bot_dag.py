@@ -1,12 +1,24 @@
-import json
-from utiles import *
+
+from utiles import (
+    binance_time_offset_ms,
+    get_capital_and_balances,
+    snapshot_capital,
+    compute_max_dd_7d,
+    compute_performance,
+    get_market_data,
+    get_decision,
+    execute_trade,
+    update_memory_with_decision
+)
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.hooks.base import BaseHook
+
 from datetime import datetime, timedelta
-import time
+import json, time
 from openai import OpenAI
 from binance.client import Client
-from airflow.hooks.base import BaseHook
+
 
 
 
@@ -24,8 +36,7 @@ with DAG(
         with open("/opt/airflow/dags/data/memory.json", "r") as f:
             memory = json.load(f)
     
-        dag_id = ti.dag_id
-        run_id = ti.run_id
+        dag_id,run_id  = ti.dag_id, ti.run_id
 
         with open(f"/opt/airflow/dags/data/memory_{dag_id}_{run_id}.json", "w") as f:
             json.dump(memory, f, indent=2)
@@ -33,115 +44,130 @@ with DAG(
         print(f"Dag id: {dag_id}, Run id: {run_id}")
 
     def get_memory(ti):
-        dag_id = ti.dag_id
-        run_id = ti.run_id
-        b = BaseHook.get_connection("binance_api")
-        api_key = b.login
-        api_secret = b.password
-        
-  
-        client = Client(api_key, api_secret)
-        binance_time_offset_ms(client)
-        capital_initial = 38.35
+        # --- 0) Contexte & client Binance ---
+        dag_id, run_id = ti.dag_id, ti.run_id
+        snap_path = f"/opt/airflow/dags/data/memory_{dag_id}_{run_id}.json"
+        base_path = "/opt/airflow/dags/data/memory.json"
 
-        with open(f"/opt/airflow/dags/data/memory_{dag_id}_{run_id}.json", "r") as f:
-            memory = json.load(f)
-    
-        capital, balances = get_capital_and_balances(client, INITIAL_CAPITAL_USDC=memory["capital"]["initial"])
+        b = BaseHook.get_connection("binance_api")
+        client = Client(b.login, b.password)
+
+        try:binance_time_offset_ms(client)  # diagnostic, n'influence pas la logique
+        except Exception:pass
+
+        # --- 1) Lecture mémoire robuste (snapshot > base > vide) ---
+        with open(base_path, "r") as f: memory = json.load(f)
+
+        memory.setdefault("capital", {})
+        memory.setdefault("recent_decisions", [])
+        memory.setdefault("capital_history", [])
+
+        # --- 2) Capital & balances (initial depuis mémoire si présent) ---
+        initial_cap = float(memory["capital"].get("initial", 5000.0))
+        capital, balances = get_capital_and_balances(client, INITIAL_CAPITAL_USDC=initial_cap)
+
+        # --- 3) MAJ état capital : snapshot -> DD 7j -> halt ---
+        snapshot_capital(memory, capital["current"])  # ajoute le point du run (anti-doublon horaire)
+        capital["max_dd_7d"] = compute_max_dd_7d(memory.get("capital_history", []), capital["current"])
+        capital["halt_triggered"] = bool(capital["current"] < 0.5 * capital["initial"])
+
+        # --- 4) Performance (à partir des décisions conservées) ---
         recent_decisions = memory.get("recent_decisions", [])
         performance = compute_performance(recent_decisions, capital["current"])
-        
-        memory["capital_history"].append({"timestamp": int(time.time()), "capital": capital["current"]})
+
+        # --- 5) État mémoire consolidé (sert au sizing paliers) ---
         memory["capital"] = capital
-        memory["capital"]["max_dd_7d"] = compute_max_dd_7d(memory.get("capital_history", []), capital["current"])
         memory["balances"] = balances
+        memory["recent_decisions"] = recent_decisions
         memory["performance"] = performance
 
-        # --- SIZING DYNAMIQUE AVEC PLANCHER D'ACHAT ---
-        usdc_free = float(balances.get("USDC", {}).get("amount", 0.0))
-        max_reb   = float(memory.get("constraints", {}).get("max_rebalance_pct", 0.30))
-        
-        # Pourcentage de risque (ex: 0.10 = 10%)
-        risk_pct  = float(memory["capital"].get("risk_per_trade_pct", 0.10))
-        risk_cap  = capital["current"] * risk_pct
-        
-        # Budget basé sur le risque et le max rebalance
-        cap_max_risk = min(capital["current"] * max_reb, risk_cap, usdc_free)
-        
-        # Plancher d'achat = plus petit min_notional des actifs tradables (ex: 5 USDC),
-        # activé si capital et USDC libre suffisent.
-        symbols = memory.get("constraints", {}).get("symbols", {})  # {"ETHUSDC": {...}, "BTCUSDC": {...}}
-        min_notionals = [float(cfg.get("min_notional", 5.0)) for cfg in symbols.values()] or [5.0]
-        global_min_notional = min(min_notionals)
-        
-        floor_ok = (capital["current"] >= global_min_notional) and (usdc_free >= global_min_notional)
-        cap_floor = global_min_notional if floor_ok else 0.0
-        
-        # Budget d'achat effectif = max(risque, plancher) mais jamais > usdc_free
-        cap_buy_budget = min(max(cap_max_risk, cap_floor), usdc_free)
-        
-        memory["sizing"] = {
-            "usdc_free": round(usdc_free, 4),
-            "cap_max": round(cap_max_risk, 4),          # budget risk-based (info)
-            "cap_buy_budget": round(cap_buy_budget, 4), # budget à utiliser pour BUY
-            "risk_cap": round(risk_cap, 4),
-            "risk_pct": round(risk_pct, 3),
-            "max_rebalance_pct": max_reb,
-            "min_ticket_usdc": global_min_notional,
-            "floor_applied": bool(cap_floor > 0 and cap_floor > cap_max_risk)
-        }
+        # --- 6) Market data avec bloc sizing "paliers" (BUY borné par headroom & rebalance, SELL non capé) ---
+        md_eth = get_market_data(client, "ETHUSDC", balances=balances, memory=memory)
+        md_btc = get_market_data(client, "BTCUSDC", balances=balances, memory=memory)
+        market_data = {"ETHUSDC": md_eth, "BTCUSDC": md_btc}
 
-
-        snapshot_capital(memory, capital["current"])
-
-        market_data = {
-            "ETHUSDC": get_market_data(client, "ETHUSDC", balances=balances, memory=memory),
-            "BTCUSDC": get_market_data(client, "BTCUSDC", balances=balances, memory=memory),
-        }
-        print("===================================")
-        print("Market data fetched.")
-
+        # --- 7) Payload, persistance snapshot & XCom ---
         payload = {"market_data": market_data, "memory": memory}
-
-        with open(f"/opt/airflow/dags/data/memory_{dag_id}_{run_id}.json", "w") as f:
-            json.dump(memory, f, indent=2)
+        
+        with open(snap_path, "w") as f:json.dump(memory, f, indent=2)
         ti.xcom_push(key="payload", value=payload)
 
-    def decision_task(ti):
-        openai_key = BaseHook.get_connection("openai_default").password
 
+    def decision_task(ti):
+        """
+        Appelle le LLM pour obtenir une décision, avec :
+        - Court-circuit HALT -> HOLD canonique 12h
+        - Try/except robuste + fallback HOLD en cas d'erreur LLM
+        - Validation/normalisation stricte du JSON (asset/pair/size_pct/risk_check/confidence/time_sleep_s)
+        - Troncature des champs verbeux pour éviter d'enfler XCom
+        """
+
+        # -------- 1) clés & payload amont --------
+        openai_key = BaseHook.get_connection("openai_default").password
         client_openai = OpenAI(api_key=openai_key)
-        
-        payload = ti.xcom_pull(key="payload", task_ids="get_memory_task")
+        payload = ti.xcom_pull(key="payload", task_ids="get_memory_task") or {}
 
         decision = get_decision(client_openai, payload)
+
         print("===================================")
-        print("Décision:", decision)
+        print(f"Décision : {decision}")
         ti.xcom_push(key="decision", value=decision)
 
+
     def action_task(ti):
-        dag_id = ti.dag_id
-        run_id = ti.run_id
-        api_key = BaseHook.get_connection("binance_api").login
-        api_secret = BaseHook.get_connection("binance_api").password
+        """
+        Exécute la décision normalisée :
+        - Récupère le snapshot mémoire du run (fallback vers memory.json si besoin)
+        - Court-circuite en HOLD si HALT actif ou décision invalide
+        - Ouvre un client Binance, aligne l'horloge, puis exécute via execute_trade (logique à paliers)
+        - Persiste la mémoire mise à jour (snapshot du run + mémoire globale)
+        - Ne DORS PAS dans un task Airflow : on log le time_sleep_s et on le laisse au scheduler
+        """
 
-        with open(f"/opt/airflow/dags/data/memory_{dag_id}_{run_id}.json", "r") as f:
-            memory = json.load(f)
+        # ------- chemins & IO -------
+        dag_id, run_id = ti.dag_id, ti.run_id
+        snap_path = f"/opt/airflow/dags/data/memory_{dag_id}_{run_id}.json"
 
-        decision = ti.xcom_pull(key="decision", task_ids="decision_task")
+        with open(snap_path, "r") as f: memory = json.load(f)
+
+        decision = ti.xcom_pull(key="decision", task_ids="decision_task") or {}
+
         print("===================================")
+        print("Décision reçue (brève) →",
+            f"side={decision.get('decision')} asset={decision.get('asset')} size_pct={decision.get('size_pct')}")
 
-        client = Client(api_key=api_key, api_secret=api_secret)
+        # ------- client Binance -------
+        b = BaseHook.get_connection("binance_api")
+        client = Client(api_key=b.login, api_secret=b.password)
 
-        memory = execute_trade(client, decision, memory)
+        try:binance_time_offset_ms(client)  # best effort
+        except Exception:pass
 
+        # ------- exécution (paliers, contrôles internes dans execute_trade) -------
+        try:memory = execute_trade(client, decision, memory)
+            
+        except Exception as e:
+            print(f"[action_task] Erreur exécution : {type(e).__name__} → skip.")
+            memory = update_memory_with_decision(
+                memory=memory,
+                symbol=decision.get("pair", "ETHUSDC"),
+                tf=decision.get("tf", "1h"),
+                decision_dict={**decision, "decision": "HOLD", "reason": f"action_error:{type(e).__name__}"},
+                price_usdc=0.0,
+                qty_quote=0.0,
+                note="action_task fallback",
+                keep_last=20
+            )
+        
         with open("/opt/airflow/dags/data/memory.json", "w") as f:
             json.dump(memory, f, indent=2)
 
-        sleep_s = int(decision.get("time_sleep_s", 0))
+        # ------- cadence : on ne bloque pas un worker Airflow avec sleep -------
+        sleep_s = int(decision.get("time_sleep_s", 0) or 0)
         if sleep_s > 0:
-            print(f"Time sleep (Décideur) : {sleep_s}s")
+            print(f"[Décideur] time_sleep_s suggéré : {sleep_s}s (aucun sleep ici ; la cadence est gérée par Airflow).")
             time.sleep(sleep_s)
+
 
     connexion_task = PythonOperator(task_id="connexion_task", python_callable=connexion_task)
 

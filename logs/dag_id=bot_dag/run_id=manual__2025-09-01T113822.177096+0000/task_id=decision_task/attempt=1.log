@@ -1,0 +1,7 @@
+{"timestamp":"2025-09-01T11:38:28.423405","level":"info","event":"DAG bundles loaded: dags-folder","logger":"airflow.dag_processing.bundles.manager.DagBundlesManager"}
+{"timestamp":"2025-09-01T11:38:28.423965","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/bot_dag.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-09-01T11:38:28.446867","level":"info","event":"Secrets backends loaded for worker","count":1,"backend_classes":["EnvironmentVariablesBackend"],"logger":"supervisor"}
+{"timestamp":"2025-09-01T11:38:28.574169","level":"info","event":"Connection Retrieved 'openai_default'","logger":"airflow.hooks.base"}
+{"timestamp":"2025-09-01T11:38:40.689787Z","level":"info","event":"===================================","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T11:38:40.690278Z","level":"info","event":"Décision normalisée: side=HOLD asset=USDC size_pct=None conf=0.0 tss=1800s","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T11:38:40.690369","level":"info","event":"Done. Returned value was: None","logger":"airflow.task.operators.airflow.providers.standard.operators.python.PythonOperator"}

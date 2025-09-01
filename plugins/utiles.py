@@ -1,29 +1,38 @@
-from binance.client import Client
-import time, json, math, os
-
-from openai import OpenAI
+import time, json, math
+import pandas as pd, numpy as np, math
 import pandas as pd
 import numpy as np
-import math
 
-def get_market_data(client, symbol: str = "ETHUSDC", interval: str = "1h",
-                    limit: int = 12, warmup: int = 120, include_ohlcv: bool = False,
-                    balances: dict | None = None, memory: dict | None = None) -> dict:
-    """
-    Snapshot de marché compact et 'pensable' par un LLM, avec enrichissement optionnel
-    de l'état de position et du sizing si `balances` et `memory` sont fournis.
-    """
-    import pandas as pd, numpy as np, math
+from decimal import Decimal, getcontext
 
-    # ---------- helpers ----------
+def get_market_data(client,
+                    symbol: str = "ETHUSDC",
+                    interval: str = "1h",
+                    limit: int = 12,
+                    warmup: int = 120,
+                    include_ohlcv: bool = False,
+                    balances: dict | None = None,
+                    memory: dict | None = None) -> dict:
+    """
+    Snapshot de marché 'pensable' par un LLM, avec indicateurs H1 et,
+    si balances+memory sont fournis, un bloc de sizing orienté paliers (5/10/25/50/75 %).
+    - BUY = % de l'USDC libre (budget quote), borné par max_rebalance et headroom d'expo.
+    - SELL = % de la base libre (ETH/BTC), **non plafonné** par max_rebalance (dé-risquage prioritaire).
+    Les paliers sont validés APRES arrondi au lot_size et contrôle min_notional.
+    """
+    
+    getcontext().prec = 28
+
+    # -------------------------- helpers génériques --------------------------
     def _series_stats(vals, rsi=False) -> dict:
         a = np.array([v for v in vals if v == v], dtype=float)
-        if a.size == 0: return {}
+        if a.size == 0:
+            return {"last": None, "min": None, "max": None, "mean": None, "slope": None, **({"above50_cnt": None} if rsi else {})}
         x = np.arange(a.size, dtype=float)
         slope = float(np.polyfit(x, a, 1)[0]) if a.size >= 2 else 0.0
-        out = {"last": round(a[-1],2), "min": round(a.min(),2), "max": round(a.max(),2),
-               "mean": round(a.mean(),2), "slope": round(slope,4)}
-        if rsi: out["above50_cnt"] = int((a>50).sum())
+        out = {"last": round(a[-1], 2), "min": round(a.min(), 2), "max": round(a.max(), 2),
+               "mean": round(a.mean(), 2), "slope": round(slope, 4)}
+        if rsi: out["above50_cnt"] = int((a > 50).sum())
         return out
 
     def _streak_pos(arr, eps=1e-9):
@@ -34,16 +43,19 @@ def get_market_data(client, symbol: str = "ETHUSDC", interval: str = "1h",
         return cnt
 
     def _pack_h1(df_in: pd.DataFrame, n: int = 12) -> list[dict]:
+        if df_in.empty: return []
         x = df_in.tail(min(n, len(df_in))).copy()
         x["above_ema"] = (x["c"] > x["ema20"]) & (x["ema20"] > x["ema50"])
         x["rsi_trend"] = (x["rsi14"].diff().rolling(3)
-                          .apply(lambda s: 1 if (s>0).sum()>=2 else 0)
-                          .map({1:"up",0:"down"}).fillna("flat"))
+                          .apply(lambda s: 1 if (s > 0).sum() >= 2 else 0)
+                          .map({1: "up", 0: "down"}).fillna("flat"))
         out = x[["t","c","ema20","ema50","rsi14","macd_line","macd_signal","macd_hist","atr_pct","above_ema","rsi_trend"]] \
                .rename(columns={"t":"time","c":"close","macd_line":"macd","macd_signal":"macd_sig"}).copy()
         out["time"] = out["time"].astype(int)
-        for col, nd in [("close",2),("ema20",2),("ema50",2),("rsi14",2),("macd",3),("macd_sig",3),("macd_hist",3)]:
+        for col, nd in [("close",2),("ema20",2),("ema50",2),("rsi14",2),("macd",3),("macd_sig",3),("macd_hist",3),("atr_pct",2)]:
             out[col] = out[col].round(nd)
+        out["above_ema"] = out["above_ema"].astype(bool)
+        out["rsi_trend"] = out["rsi_trend"].astype(str)
         return out.to_dict("records")
 
     def _h1_summary(df_in: pd.DataFrame) -> dict:
@@ -52,7 +64,7 @@ def get_market_data(client, symbol: str = "ETHUSDC", interval: str = "1h",
         close = df_in["c"].values
         ema50 = df_in["ema50"].values
         hist  = (df_in["macd_line"] - df_in["macd_signal"]).tolist()
-        dist = round(100*(close[-1]-ema50[-1])/ema50[-1], 2) if ema50[-1]==ema50[-1] else None
+        dist = None if (ema50[-1] != ema50[-1] or ema50[-1] == 0) else round(100*(close[-1]-ema50[-1])/ema50[-1], 2)
         hh, ll = round(float(df_in["h"].max()),2), round(float(df_in["l"].min()),2)
         consec_pos = _streak_pos(hist)
         hist_slope_3 = round(pd.Series(hist).diff().tail(3).sum(), 3) if len(hist)>=3 else None
@@ -76,17 +88,19 @@ def get_market_data(client, symbol: str = "ETHUSDC", interval: str = "1h",
                 "vol_sum": vol_sum, "vol_avg": vol_avg, "green_bars": int(lg.sum()), "red_bars": int(lr.sum()),
                 "longest_green_streak": longest_green, "longest_red_streak": longest_red}
 
-    # ---------- 1) chargement + warmup ----------
+    # -------------------------- 1) chargement + warmup --------------------------
     lookback = max(limit, warmup)
     klines = client.get_klines(symbol=symbol, interval=interval, limit=lookback)
     if not klines:
-        return {"symbol": symbol, "tf": interval, "fees_bps": 7,
-                "features": {"ohlcv_stats": {}, "hourly_snapshots": [], "stats": {}, **({"ohlcv": []} if include_ohlcv else {})}}
+        base_out = {"symbol": symbol, "tf": interval, "fees_bps": 7,
+                    "features": {"ohlcv_stats": {}, "hourly_snapshots": [], "stats": {}}}
+        if include_ohlcv: base_out["features"]["ohlcv"] = []
+        return base_out
 
     df_full = pd.DataFrame(klines, columns=["t","o","h","l","c","v","ct","qv","n","tbv","tbq","i"])[["t","o","h","l","c","v"]].astype(float)
     df_full["t"] = (df_full["t"] // 1000).astype(int)
 
-    # ---------- 2) indicateurs ----------
+    # -------------------------- 2) indicateurs --------------------------
     df_full["ema20"] = df_full["c"].ewm(span=20, adjust=False).mean()
     df_full["ema50"] = df_full["c"].ewm(span=50, adjust=False).mean()
     d = df_full["c"].diff(); gain = d.clip(lower=0); loss = -d.clip(upper=0)
@@ -97,32 +111,31 @@ def get_market_data(client, symbol: str = "ETHUSDC", interval: str = "1h",
     df_full["macd_hist"] = df_full["macd_line"] - df_full["macd_signal"]
     prev_c = df_full["c"].shift(1)
     tr = pd.concat([(df_full["h"]-df_full["l"]).abs(), (df_full["h"]-prev_c).abs(), (df_full["l"]-prev_c).abs()], axis=1).max(axis=1)
-    df_full["atr_pct"] = (tr.ewm(span=14, adjust=False).mean()/df_full["c"]*100).round(2)
+    df_full["atr_pct"] = (tr.ewm(span=14, adjust=False).mean()/df_full["c"]*100)
 
-    # ---------- 3) tronquage ----------
+    # -------------------------- 3) tronquage H1 --------------------------
     df = df_full.tail(limit).copy()
 
-    # ---------- 4) features tech ----------
+    # -------------------------- 4) features techniques --------------------------
     ema20_s, ema50_s = df["ema20"].tolist(), df["ema50"].tolist()
-    rsi_s = df["rsi14"].tolist(); macd_s, sig_s, hist_s = df["macd_line"].tolist(), df["macd_signal"].tolist(), df["macd_hist"].tolist()
+    rsi_s = df["rsi14"].tolist()
+    macd_s, sig_s, hist_s = df["macd_line"].tolist(), df["macd_signal"].tolist(), df["macd_hist"].tolist()
     atr_s = df["atr_pct"].tolist()
-
     stats = {
-        "ema20": _series_stats(ema20_s), "ema50": _series_stats(ema50_s),
+        "ema20": _series_stats(ema20_s),
+        "ema50": _series_stats(ema50_s),
         "rsi14": _series_stats(rsi_s, rsi=True),
         "macd": {"last": (round(macd_s[-1],3) if macd_s else None),
                  "signal_last": (round(sig_s[-1],3) if sig_s else None),
                  "hist_last": (round(hist_s[-1],3) if hist_s else None),
                  "hist_mean": (round(float(pd.Series(hist_s).mean()),3) if hist_s else None)},
-        "atr_pct": {"last": (atr_s[-1] if atr_s else None),
+        "atr_pct": {"last": (round(atr_s[-1],2) if atr_s else None),
                     "mean": (round(float(pd.Series(atr_s).mean()),2) if atr_s else None)},
         "h1": _h1_summary(df),
     }
-
     hourly_snapshots = _pack_h1(df, n=12)
     ohlcv_stats = _ohlcv_stats(df, lookback=min(12, len(df)))
-
-    features = {"ohlcv_stats": ohlcv_stats, "hourly_snapshots": hourly_snapshots, "stats": stats}
+    features: dict = {"ohlcv_stats": ohlcv_stats, "hourly_snapshots": hourly_snapshots, "stats": stats}
     if include_ohlcv:
         features["ohlcv"] = df.apply(lambda r: {"t": int(r["t"]),
                                                 "o": round(float(r["o"]),2),
@@ -131,67 +144,125 @@ def get_market_data(client, symbol: str = "ETHUSDC", interval: str = "1h",
                                                 "c": round(float(r["c"]),2),
                                                 "v": round(float(r["v"]),4)}, axis=1).tolist()
 
-    # ---------- 5) enrichissement position/sizing (optionnel) ----------
-    if balances is not None and memory is not None:
-        px = float(client.get_symbol_ticker(symbol=symbol)["price"])
-        base = symbol.replace("USDC", "")
-        amt_base = float(balances.get(base, {}).get("amount", 0.0))
-        min_notional = float(memory.get("constraints", {}).get("min_notional_usdc", 5.0))
-        lot_cfg = {"ETH": float(memory.get("constraints", {}).get("lot_size_eth", 0.0001)),
-                   "BTC": float(memory.get("constraints", {}).get("lot_size_btc", 0.00001))}
-        lot_size = lot_cfg.get(base, 0.0)
+    # -------------------------- 5) enrichissement position/sizing (optionnel) --------------------------
+    if balances is None or memory is None:
+        return {"symbol": symbol, "tf": interval, "fees_bps": 7, "features": features}
 
-        usdc_free = float(balances.get("USDC", {}).get("amount", 0.0))
-        cap_cur = float(memory["capital"]["current"])
-        max_reb = float(memory.get("constraints", {}).get("max_rebalance_pct", 0.30))
-        risk_cap = memory["capital"]["current"] * memory["capital"].get("risk_per_trade_pct", 0.10)
-        cap_max = min(cap_cur*max_reb, risk_cap, usdc_free)
-        min_qty = max(lot_size, (min_notional/px))
+    # Prix & base
+    try: px = float(client.get_symbol_ticker(symbol=symbol)["price"])
+    except Exception: px = float(df["c"].iloc[-1]) if not df.empty else 0.0
+    base = symbol.replace("USDC", "")  # "ETH" ou "BTC"
 
-        features["position_state"] = {
-            "status": "long_spot" if amt_base > 0 else "flat",
-            "size_base": round(amt_base, 8),
-            "size_quote": round(amt_base * px, 2),
-            "px": round(px, 2),
-            "min_notional": float(min_notional),
-            "lot_size": float(lot_size),
-            "min_qty": round(min_qty, 8),
-        }
-        # on duplique un petit bloc sizing global pour que le modèle l'ait sous la main
-        features["sizing"] = {
-            "usdc_free": round(usdc_free, 2),
-            "cap_max": round(cap_max, 2),
-            "risk_cap": round(risk_cap, 2),
-            "max_rebalance_pct": max_reb,
-        }
+    # Contraintes (pair > global > défauts)
+    constraints = memory.get("constraints", {})
+    symbols_c = constraints.get("symbols", {})
+    sym_c = symbols_c.get(symbol, {})
+    lot_size = float(sym_c.get("lot_size", constraints.get("lot_size_"+base.lower(), 0.0))) or float({"ETH":0.0001,"BTC":0.00001}.get(base,0.0001))
+    min_notional = float(sym_c.get("min_notional", constraints.get("min_notional_usdc", 5.0)))
+    max_rebalance_pct = float(constraints.get("max_rebalance_pct", 0.30))
+    max_exposure_pct = float(constraints.get("max_exposure_pct", 0.25))
 
-    cap_cur = float(memory["capital"]["current"])
-    max_expo = float(memory.get("constraints", {}).get("max_exposure_pct", 0.25))
-    val_base_usdc = amt_base * px
-    exposure_pct = (val_base_usdc / cap_cur) if cap_cur > 0 else 0.0
-    headroom_usdc = max(0.0, cap_cur*max_expo - val_base_usdc)
+    # Soldes & capital
+    usdc_free = float(balances.get("USDC", {}).get("amount", 0.0))
+    base_free = float(balances.get(base, {}).get("amount", 0.0))
+    cap_cur   = float(memory.get("capital", {}).get("current", 0.0))
 
-    def _round_lot(q, lot):
-        # floor au pas de lot sans passer dessous min_qty quand on l'utilise
-        return math.floor(q/lot)*lot
+    # Exposition actuelle & headroom (budget d'expo restant en USDC pour CET actif)
+    val_base_usdc = base_free * px
+    expo_cap_usdc = max_exposure_pct * cap_cur
+    headroom_usdc = max(0.0, expo_cap_usdc - val_base_usdc)
+    exposure_pct  = (val_base_usdc / cap_cur) if cap_cur > 0 else 0.0
 
-    max_buy_usdc = max(0.0, min(cap_max, headroom_usdc))
-    min_buy_usdc = float(min_notional)
-    max_buy_qty = _round_lot(max_buy_usdc/px, lot_size) if px>0 else 0.0
-    min_buy_qty = math.ceil((min_buy_usdc/px)/lot_size)*lot_size if px>0 else 0.0
+    # Limite de rebalance (quote) par tour pour BUY (SELL non borné par cap)
+    cap_rebalance_usdc = max_rebalance_pct * cap_cur
 
-    max_sell_qty = _round_lot(amt_base, lot_size) if (amt_base*px)>=min_notional else 0.0
+    # Paliers BUY : budget borné par rebalance & headroom & cash, validation après arrondi
+    buy_levels = []
+    for lvl in (5,10,25,50,75,100):
+        reason = []
+        budget_plan = usdc_free * (lvl/100.0)
+        budget_cap  = min(budget_plan, cap_rebalance_usdc, headroom_usdc, usdc_free)
+        qty_plan    = (budget_cap / px) if px > 0 else 0.0
+        qty_base = float((Decimal(str(qty_plan)) // Decimal(str(lot_size))) * Decimal(str(lot_size)))
 
-    features["position_state"]["exposure_pct"] = round(exposure_pct, 4)
-    features["trade_ticket"] = {
+        notional    = qty_base * px
+        feasible    = True
+        if budget_cap <= 0: feasible=False; reason.append("no_budget")
+        if qty_base   <= 0: feasible=False; reason.append("rounded_to_zero")
+        if notional < min_notional: feasible=False; reason.append("below_min_notional")
+        buy_levels.append({
+            "pct": lvl,
+            "budget_plan_usdc": round(budget_plan, 2),
+            "budget_used_usdc": round(budget_cap, 2),
+            "qty_base": round(qty_base, 8),
+            "notional_usdc": round(notional, 2),
+            "feasible": bool(feasible),
+            "why_not": ",".join(reason) if (not feasible and reason) else ""
+        })
+
+    # Paliers SELL : dé-risquage prioritaire → **aucun cap de rebalance** appliqué ici
+    sell_levels = []
+    for lvl in (5,10,25,50,75,100):
+        reason = []
+        qty_plan = base_free * (lvl/100.0)
+        qty_base = float((Decimal(str(qty_plan)) // Decimal(str(lot_size))) * Decimal(str(lot_size)))
+
+        notional = qty_base * px
+        feasible = True
+        if qty_base <= 0: feasible=False; reason.append("rounded_to_zero")
+        if notional < min_notional: feasible=False; reason.append("below_min_notional")
+        sell_levels.append({
+            "pct": lvl,
+            "qty_base": round(qty_base, 8),
+            "notional_usdc": round(notional, 2),
+            "feasible": bool(feasible),
+            "why_not": ",".join(reason) if (not feasible and reason) else ""
+        })
+
+    # Position state
+    pos_state = {
+        "status": "long_spot" if base_free > 0 else "flat",
+        "size_base": round(base_free, 8),
+        "size_quote": round(val_base_usdc, 2),
+        "px": round(px, 4),
+        "lot_size": float(lot_size),
+        "min_notional": float(min_notional),
+        "exposure_pct": round(exposure_pct, 4)
+    }
+
+    # Ticket récapitulatif (bornes)
+    max_buy_usdc = max(0.0, min(cap_rebalance_usdc, headroom_usdc, usdc_free))
+    max_buy_qty  = float((Decimal(str(max_buy_usdc/px)) // Decimal(str(lot_size))) * Decimal(str(lot_size))) if px>0 else 0.0
+    max_sell_qty = float((Decimal(str(base_free))      // Decimal(str(lot_size))) * Decimal(str(lot_size))) if (base_free*px)>=min_notional else 0.0
+
+    trade_ticket = {
         "max_buy_usdc": round(max_buy_usdc, 2),
-        "min_buy_usdc": round(min_buy_usdc, 2),
         "max_buy_qty_base": round(max_buy_qty, 8),
-        "min_buy_qty_base": round(min_buy_qty, 8),
         "max_sell_qty_base": round(max_sell_qty, 8)
     }
 
-    # ---------- 6) retour ----------
+    # Bloc sizing orienté paliers
+    features["sizing"] = {
+        "mode": "paliers",
+        "fees_bps": 7,
+        "usdc_free": round(usdc_free, 2),
+        "base_free": round(base_free, 8),
+        "cap_current_usdc": round(cap_cur, 2),
+        "px_est": round(px, 6),
+        "constraints": {
+            "lot_size": float(lot_size),
+            "min_notional_usdc": float(min_notional),
+            "max_rebalance_pct": float(max_rebalance_pct),
+            "max_exposure_pct": float(max_exposure_pct),
+            "headroom_usdc": round(headroom_usdc, 2)
+        },
+        "paliers_buy": buy_levels,
+        "paliers_sell": sell_levels,
+        "trade_ticket": trade_ticket
+    }
+    features["position_state"] = pos_state
+
+    # -------------------------- 6) retour --------------------------
     return {"symbol": symbol, "tf": interval, "fees_bps": 7, "features": features}
 
 
@@ -304,120 +375,180 @@ def build_df(ohlcv_list):
     return df
 
 def compute_regime(client):
-    # --- D1 & M1 pour ETH et BTC ---
-    eth_d1 = build_df(get_market_data(client, "ETHUSDC", "1d", 60)["features"]["ohlcv"])
-    btc_d1 = build_df(get_market_data(client, "BTCUSDC", "1d", 60)["features"]["ohlcv"])
-    eth_m1 = build_df(get_market_data(client, "ETHUSDC", "1M", 36)["features"]["ohlcv"])
-    btc_m1 = build_df(get_market_data(client, "BTCUSDC", "1M", 36)["features"]["ohlcv"])
+    """
+    Calcule le régime de marché (overview, per_asset, relative_strength) pour ETH/BTC.
+    Robuste aux données manquantes et corrige la lecture d'ohlcv via include_ohlcv=True.
+    """
 
-    # --- métriques D1 (par actif) ---
-    atr_eth = atr_wilder(eth_d1["h"], eth_d1["l"], eth_d1["c"])
-    atr_btc = atr_wilder(btc_d1["h"], btc_d1["l"], btc_d1["c"])
-    atr_rank_eth = rank_last_in_window(atr_eth, window=30)
-    atr_rank_btc = rank_last_in_window(atr_btc, window=30)
+    # --- helpers sûrs ---
+    def _ohlcv_df(sym: str, tf: str, n: int) -> pd.DataFrame:
+        try:
+            md = get_market_data(client, sym, tf, limit=n, warmup=max(n, 3), include_ohlcv=True)
+            ohlcv = md.get("features", {}).get("ohlcv", [])
+            df = build_df(ohlcv) if ohlcv else pd.DataFrame(columns=["t","o","h","l","c","v"])
+        except Exception:
+            df = pd.DataFrame(columns=["t","o","h","l","c","v"])
+        # types + garde
+        for col in ["t","o","h","l","c","v"]:
+            if col not in df.columns:
+                df[col] = []
+        return df.dropna()
 
-    ret5d_eth = pct_return_n(eth_d1["c"], 5)
-    ret5d_btc = pct_return_n(btc_d1["c"], 5)
+    def _safe_bool(x):
+        try:
+            return bool(x)
+        except Exception:
+            return False
 
-    ema30d_eth = eth_d1["c"].ewm(span=30, adjust=False).mean()
-    ema30d_btc = btc_d1["c"].ewm(span=30, adjust=False).mean()
-    slope30d_eth = safe_pct_slope(ema30d_eth, lag=5)
-    slope30d_btc = safe_pct_slope(ema30d_btc, lag=5)
+    def _safe_round(x, nd=3):
+        try:
+            return round(float(x), nd)
+        except Exception:
+            return None
 
-    # --- métriques M1 (par actif) ---
-    c_eth_m, c_btc_m = eth_m1["c"], btc_m1["c"]
-    ret3m_eth, ret6m_eth, ret12m_eth = pct_return_n(c_eth_m, 3), pct_return_n(c_eth_m, 6), pct_return_n(c_eth_m, 12)
-    ret3m_btc, ret6m_btc, ret12m_btc = pct_return_n(c_btc_m, 3), pct_return_n(c_btc_m, 6), pct_return_n(c_btc_m, 12)
+    def _daily_metrics(df_d1: pd.DataFrame):
+        if df_d1.empty:
+            return {"atr": None, "atr_rank": None, "ret5d": None, "ema30d_slope": None}
+        atr = atr_wilder(df_d1["h"], df_d1["l"], df_d1["c"])
+        atr_rank = rank_last_in_window(atr, window=30)
+        ret5d = pct_return_n(df_d1["c"], 5)
+        ema30d = df_d1["c"].ewm(span=30, adjust=False).mean()
+        slope30d = safe_pct_slope(ema30d, lag=5)
+        return {"atr": atr, "atr_rank": atr_rank, "ret5d": ret5d, "ema30d_slope": slope30d}
 
-    ema12m_eth = c_eth_m.ewm(span=12, adjust=False).mean()
-    ema12m_btc = c_btc_m.ewm(span=12, adjust=False).mean()
-    slope12m_eth = safe_pct_slope(ema12m_eth, lag=3)
-    slope12m_btc = safe_pct_slope(ema12m_btc, lag=3)
-    above12m_eth = bool(c_eth_m.iloc[-1] > ema12m_eth.iloc[-1])
-    above12m_btc = bool(c_btc_m.iloc[-1] > ema12m_btc.iloc[-1])
+    def _monthly_metrics(df_m1: pd.DataFrame):
+        if df_m1.empty:
+            return {"ret3m": None, "ret6m": None, "ret12m": None, "ema12m_slope": None, "above_ema12m": False}
+        c = df_m1["c"]
+        ret3m, ret6m, ret12m = pct_return_n(c, 3), pct_return_n(c, 6), pct_return_n(c, 12)
+        ema12m = c.ewm(span=12, adjust=False).mean()
+        slope12m = safe_pct_slope(ema12m, lag=3)
+        above = _safe_bool(c.iloc[-1] > ema12m.iloc[-1]) if len(c) and len(ema12m) else False
+        return {"ret3m": ret3m, "ret6m": ret6m, "ret12m": ret12m, "ema12m_slope": slope12m, "above_ema12m": above}
 
-    # --- context (min, max, mean, volume) ---
-    ctx_eth = {
-        "min_30d": round(float(eth_d1["c"].tail(30).min()), 2),
-        "max_30d": round(float(eth_d1["c"].tail(30).max()), 2),
-        "mean_30d": round(float(eth_d1["c"].tail(30).mean()), 2),
-        "avg_volume_30d": round(float(eth_d1["v"].tail(30).mean()), 2),
-    }
-    ctx_btc = {
-        "min_30d": round(float(btc_d1["c"].tail(30).min()), 2),
-        "max_30d": round(float(btc_d1["c"].tail(30).max()), 2),
-        "mean_30d": round(float(btc_d1["c"].tail(30).mean()), 2),
-        "avg_volume_30d": round(float(btc_d1["v"].tail(30).mean()), 2),
-    }
+    def _ctx_30d(df_d1: pd.DataFrame):
+        if df_d1.empty:
+            return {"min_30d": None, "max_30d": None, "mean_30d": None, "avg_volume_30d": None}
+        tail = df_d1.tail(30)
+        return {
+            "min_30d": _safe_round(tail["c"].min(), 2),
+            "max_30d": _safe_round(tail["c"].max(), 2),
+            "mean_30d": _safe_round(tail["c"].mean(), 2),
+            "avg_volume_30d": _safe_round(tail["v"].mean(), 2),
+        }
 
-    # --- per_asset ---
+    # --- 1) Récupération D1 / M1 ---
+    eth_d1 = _ohlcv_df("ETHUSDC", "1d", 60)
+    btc_d1 = _ohlcv_df("BTCUSDC", "1d", 60)
+    eth_m1 = _ohlcv_df("ETHUSDC", "1M", 36)
+    btc_m1 = _ohlcv_df("BTCUSDC", "1M", 36)
+
+    # --- 2) Métriques par actif ---
+    dm_eth = _daily_metrics(eth_d1)
+    dm_btc = _daily_metrics(btc_d1)
+    mm_eth = _monthly_metrics(eth_m1)
+    mm_btc = _monthly_metrics(btc_m1)
+
+    ctx_eth = _ctx_30d(eth_d1)
+    ctx_btc = _ctx_30d(btc_d1)
+
+    # --- 3) per_asset ---
     per_asset = {
         "ETHUSDC": {
-            "market_state": market_state_from_metrics(slope30d_eth, above12m_eth),
+            "market_state": market_state_from_metrics(dm_eth["ema30d_slope"] or 0.0, mm_eth["above_ema12m"]),
             "daily": {
-                "ret_5d_pct": round(ret5d_eth, 3),
-                "ema30d_slope_pct": round(slope30d_eth, 3),
-                "atr_rank_30d": round(atr_rank_eth, 3)
+                "ret_5d_pct": _safe_round(dm_eth["ret5d"], 3),
+                "ema30d_slope_pct": _safe_round(dm_eth["ema30d_slope"], 3),
+                "atr_rank_30d": _safe_round(dm_eth["atr_rank"], 3)
             },
             "monthly": {
-                "ret_3m_pct": round(ret3m_eth, 3),
-                "ret_6m_pct": round(ret6m_eth, 3),
-                "ret_12m_pct": round(ret12m_eth, 3),
-                "above_ema12m": above12m_eth,
-                "ema12m_slope_pct": round(slope12m_eth, 3)
+                "ret_3m_pct": _safe_round(mm_eth["ret3m"], 3),
+                "ret_6m_pct": _safe_round(mm_eth["ret6m"], 3),
+                "ret_12m_pct": _safe_round(mm_eth["ret12m"], 3),
+                "above_ema12m": _safe_bool(mm_eth["above_ema12m"]),
+                "ema12m_slope_pct": _safe_round(mm_eth["ema12m_slope"], 3)
             },
             "context": ctx_eth
         },
         "BTCUSDC": {
-            "market_state": market_state_from_metrics(slope30d_btc, above12m_btc),
+            "market_state": market_state_from_metrics(dm_btc["ema30d_slope"] or 0.0, mm_btc["above_ema12m"]),
             "daily": {
-                "ret_5d_pct": round(ret5d_btc, 3),
-                "ema30d_slope_pct": round(slope30d_btc, 3),
-                "atr_rank_30d": round(atr_rank_btc, 3)
+                "ret_5d_pct": _safe_round(dm_btc["ret5d"], 3),
+                "ema30d_slope_pct": _safe_round(dm_btc["ema30d_slope"], 3),
+                "atr_rank_30d": _safe_round(dm_btc["atr_rank"], 3)
             },
             "monthly": {
-                "ret_3m_pct": round(ret3m_btc, 3),
-                "ret_6m_pct": round(ret6m_btc, 3),
-                "ret_12m_pct": round(ret12m_btc, 3),
-                "above_ema12m": above12m_btc,
-                "ema12m_slope_pct": round(slope12m_btc, 3)
+                "ret_3m_pct": _safe_round(mm_btc["ret3m"], 3),
+                "ret_6m_pct": _safe_round(mm_btc["ret6m"], 3),
+                "ret_12m_pct": _safe_round(mm_btc["ret12m"], 3),
+                "above_ema12m": _safe_bool(mm_btc["above_ema12m"]),
+                "ema12m_slope_pct": _safe_round(mm_btc["ema12m_slope"], 3)
             },
             "context": ctx_btc
         }
     }
 
-    # --- overview (moyenne simple ETH/BTC) ---
+    # --- 4) overview (moyenne simple ETH/BTC) ---
+    def _avg(a, b):
+        try:
+            return (float(a) + float(b)) / 2.0
+        except Exception:
+            # si l'un manque → retourner l'autre, sinon None
+            if a is not None and a == a:
+                return float(a)
+            if b is not None and b == b:
+                return float(b)
+            return None
+
+    vol_rank_30d = _avg(dm_eth["atr_rank"], dm_btc["atr_rank"])
+    daily_ret5 = _avg(dm_eth["ret5d"], dm_btc["ret5d"])
+    daily_slope = _avg(dm_eth["ema30d_slope"], dm_btc["ema30d_slope"])
+    m_ret3 = _avg(mm_eth["ret3m"], mm_btc["ret3m"])
+    m_ret6 = _avg(mm_eth["ret6m"], mm_btc["ret6m"])
+    m_ret12 = _avg(mm_eth["ret12m"], mm_btc["ret12m"])
+    m_slope12 = _avg(mm_eth["ema12m_slope"], mm_btc["ema12m_slope"])
+    m_above = _safe_bool(mm_eth["above_ema12m"] or mm_btc["above_ema12m"])
+
     overview = {
-        "market_state": "range",
-        "volatility_rank_30d": round((atr_rank_eth + atr_rank_btc) / 2, 3),
+        "market_state": "range",  # sera recalculé juste après
+        "volatility_rank_30d": _safe_round(vol_rank_30d, 3),
         "daily": {
-            "ret_5d_pct": round((ret5d_eth + ret5d_btc) / 2, 3),
-            "ema30d_slope_pct": round((slope30d_eth + slope30d_btc) / 2, 3),
-            "atr_rank_30d": round((atr_rank_eth + atr_rank_btc) / 2, 3)
+            "ret_5d_pct": _safe_round(daily_ret5, 3),
+            "ema30d_slope_pct": _safe_round(daily_slope, 3),
+            "atr_rank_30d": _safe_round(vol_rank_30d, 3)
         },
         "monthly": {
-            "ret_3m_pct": round((ret3m_eth + ret3m_btc) / 2, 3),
-            "ret_6m_pct": round((ret6m_eth + ret6m_btc) / 2, 3),
-            "ret_12m_pct": round((ret12m_eth + ret12m_btc) / 2, 3),
-            "above_ema12m": (above12m_eth or above12m_btc),
-            "ema12m_slope_pct": round((slope12m_eth + slope12m_btc) / 2, 3)
+            "ret_3m_pct": _safe_round(m_ret3, 3),
+            "ret_6m_pct": _safe_round(m_ret6, 3),
+            "ret_12m_pct": _safe_round(m_ret12, 3),
+            "above_ema12m": m_above,
+            "ema12m_slope_pct": _safe_round(m_slope12, 3)
         }
     }
     overview["market_state"] = market_state_from_metrics(
-        overview["daily"]["ema30d_slope_pct"],
+        overview["daily"]["ema30d_slope_pct"] or 0.0,
         overview["monthly"]["above_ema12m"]
     )
 
-    # --- relative strength ETH vs BTC ---
-    eth_h1 = build_df(get_market_data(client, "ETHUSDC", "1h", 30)["features"]["ohlcv"])
-    btc_h1 = build_df(get_market_data(client, "BTCUSDC", "1h", 30)["features"]["ohlcv"])
-    rs_h1 = (eth_h1["c"] / btc_h1["c"]).ewm(span=10, adjust=False).mean()
-    h1_slope = safe_pct_slope(rs_h1, lag=5)
+    # --- 5) relative strength ETH vs BTC (H1 et D1, alignement index) ---
+    eth_h1 = _ohlcv_df("ETHUSDC", "1h", 60)
+    btc_h1 = _ohlcv_df("BTCUSDC", "1h", 60)
 
-    rs_d1 = (eth_d1["c"] / btc_d1["c"]).ewm(span=10, adjust=False).mean()
-    d1_slope = safe_pct_slope(rs_d1, lag=5)
+    def _rs_slope(df_a: pd.DataFrame, df_b: pd.DataFrame, span: int, lag: int):
+        if df_a.empty or df_b.empty:
+            return None
+        s = pd.DataFrame({"a": df_a["c"].values, "b": df_b["c"].values}).dropna()
+        if s.empty:
+            return None
+        rs = (s["a"] / s["b"]).ewm(span=span, adjust=False).mean()
+        return safe_pct_slope(rs, lag=lag)
 
-    if d1_slope > 0.5:
+    h1_slope = _rs_slope(eth_h1, btc_h1, span=10, lag=5)
+    d1_slope = _rs_slope(eth_d1, btc_d1, span=10, lag=5)
+
+    if d1_slope is None:
+        rel_state = "neutral"
+    elif d1_slope > 0.5:
         rel_state = "eth_outperform"
     elif d1_slope < -0.5:
         rel_state = "btc_outperform"
@@ -427,10 +558,11 @@ def compute_regime(client):
     relative_strength = {
         "pair": "ETHBTC",
         "state": rel_state,
-        "h1_slope_pct": round(h1_slope, 3),
-        "d1_slope_pct": round(d1_slope, 3)
+        "h1_slope_pct": _safe_round(h1_slope, 3),
+        "d1_slope_pct": _safe_round(d1_slope, 3)
     }
 
+    # --- 6) retour ---
     regime = {
         "overview": overview,
         "per_asset": per_asset,
@@ -438,58 +570,101 @@ def compute_regime(client):
     }
     return regime
 
-def build_constraints():
-    return {
-        "max_exposure_pct": 0.25,   # exposition max par actif (25% du capital)
-        "max_rebalance_pct": 0.30,  # rotation max du capital par tour
-        "stable_symbol": "USDC",
-        "symbols": {
-            "ETHUSDC": {"lot_size": 0.0001, "min_notional": 5.0},
-            "BTCUSDC": {"lot_size": 0.00001, "min_notional": 5.0}
-        }
-    }
 
-def update_memory_with_decision(memory: dict, 
-                                symbol: str, 
-                                tf: str, 
+
+def update_memory_with_decision(memory: dict,
+                                symbol: str,
+                                tf: str,
                                 decision_dict: dict,
-                                price_usdc: float, 
-                                qty_quote: float = None, 
-                                note: str = "", 
-                                keep_last:int = 20):
-    
-    # recent_decisions append
+                                price_usdc: float,
+                                qty_quote: float | None = None,
+                                note: str = "",
+                                keep_last: int = 20) -> dict:
+    """
+    Ajoute une entrée dans recent_decisions et maintient les champs dérivés (constraints, performance).
+    - Enregistre les infos de décision + sizing (mode 'paliers' avec size_pct si présent).
+    - 'execution' sera complété plus tard (par execute_trade).
+    """
+
+    # --- sécurités / defaults ---
+    if not isinstance(memory, dict):
+        memory = {}
+        memory.setdefault("recent_decisions", [])
+        memory.setdefault("capital", {"current": 0.0, "initial": 0.0})
+
+    # --- extraction sûre des champs de décision ---
+    def _f(x, nd=None):
+        try:
+            v = float(x)
+            return round(v, nd) if (nd is not None) else v
+        except Exception:
+            return 0.0 if nd is not None else None
+
+    decision     = (decision_dict or {}).get("decision", "HOLD")
+    asset        = (decision_dict or {}).get("asset")
+    pair         = (decision_dict or {}).get("pair", symbol)
+    confidence   = _f((decision_dict or {}).get("confidence"), 3)
+    entry        = (decision_dict or {}).get("entry", "market")
+    sl           = _f((decision_dict or {}).get("sl"), 6)
+    tp           = _f((decision_dict or {}).get("tp"), 6)
+    rcheck       = (decision_dict or {}).get("risk_check", "ok")
+    reason       = (decision_dict or {}).get("reason", "")
+    next_steps   = (decision_dict or {}).get("next_steps", "")
+    sleep_s      = int((decision_dict or {}).get("time_sleep_s", 0) or 0)
+    size_pct     = (decision_dict or {}).get("size_pct")  # attendu ∈ {5,10,25,50,75} ou None
+    sizing_mode  = (decision_dict or {}).get("sizing_mode", "paliers" if size_pct is not None else "legacy")
+
+    # qty_quote priorise l'override param puis la valeur de la décision
+    q_quote = qty_quote
+    if q_quote is None:
+        q_quote = _f((decision_dict or {}).get("qty_quote"), 2)
+
+    # --- construction de l'enregistrement ---
     rec = {
         "ts": int(time.time()),
-        "symbol": symbol,
+        "symbol": symbol,            # ex: "ETHUSDC" (celui du contexte d'appel)
+        "pair": pair,                # ex: "ETHUSDC" (source décision)
+        "asset": asset,              # "ETH" | "BTC" | "USDC"
         "tf": tf,
-        "decision": decision_dict.get("decision"),
-        "confidence": decision_dict.get("confidence"),
-        "entry": decision_dict.get("entry"),
-        "entry_price": price_usdc,
-        "sl": decision_dict.get("sl", 0.0),
-        "tp": decision_dict.get("tp", 0.0),
-        "qty_quote": decision_dict.get("qty_quote") if qty_quote is None else qty_quote,
-        "risk_check": decision_dict.get("risk_check", "ok"),
-        "reason": decision_dict.get("reason", ""),
-        "next_steps": decision_dict.get("next_steps", ""),
-        "time_sleep_s": int(decision_dict.get("time_sleep_s", 0)),
-        "outcome": {"closed": False},   # fermé plus tard, quand le trade est clôturé
+        "decision": decision,        # "BUY" | "SELL" | "HOLD"
+        "confidence": confidence,
+        "entry": entry,              # "market" | "limit"
+        "entry_price": _f(price_usdc, 6),
+        "sl": sl,
+        "tp": tp,
+        "qty_quote": q_quote,        # informatif (la quantité finale est recalculée côté exécution)
+        "risk_check": rcheck,        # "ok" | "too_high"
+        "reason": reason,
+        "next_steps": next_steps,
+        "time_sleep_s": sleep_s,
+        # Sizing (logique à paliers)
+        "sizing_mode": sizing_mode,  # "paliers" ou "legacy"
+        "size_pct": int(size_pct) if isinstance(size_pct, (int, float)) else None,
+        "palier_initial": int(size_pct) if isinstance(size_pct, (int, float)) else None,
+        "palier_effectif": None,     # rempli par execute_trade (après escalade/dé-escalade)
+        # État d'issue (complété à l'exécution ou à la clôture)
+        "outcome": {"closed": False},
         "note": note
     }
-    memory.setdefault("recent_decisions", []).append(rec)
-    # garder seulement les N derniers
-    if len(memory["recent_decisions"]) > keep_last:
+    rec["next_step"] = decision_dict.get("next_step", "")
+
+
+    # --- append + rétention ---
+    memory["recent_decisions"].append(rec)
+    try:
+        keep_last = int(keep_last)
+    except Exception:
+        keep_last = 20
+    if keep_last > 0 and len(memory["recent_decisions"]) > keep_last:
         memory["recent_decisions"] = memory["recent_decisions"][-keep_last:]
 
-    # recoller les contraintes si pas présentes
-    memory.setdefault("constraints", build_constraints())
-
-    # recalcul performance basique (si tu as déjà la fonction compute_performance)
+    # --- recalcul performance basique (tolérant aux erreurs) ---
     try:
-        perf = compute_performance(memory.get("recent_decisions", []), memory["capital"]["current"])
+        perf = compute_performance(memory.get("recent_decisions", []),
+                                   float(memory.get("capital", {}).get("current", 0.0)))
         memory["performance"] = perf
     except Exception:
+        # on ne casse pas la mise à jour mémoire si la perf est indisponible
         pass
 
     return memory
@@ -505,268 +680,237 @@ def get_decision(client_openai, payload, prompt_id='pmpt_68b048b3ba7881959eedbbe
     except Exception:
         return {"error": "invalid JSON", "raw": out_text}
     
-def get_capital_and_balances(client: Client, INITIAL_CAPITAL_USDC=5000):
-    # Prix spot USDC
-    px_eth = float(client.get_symbol_ticker(symbol="ETHUSDC")["price"])
-    px_btc = float(client.get_symbol_ticker(symbol="BTCUSDC")["price"])
+def get_capital_and_balances(client, INITIAL_CAPITAL_USDC: float = 5000.0):
+    """
+    Récupère le capital total en USDC et les soldes par actif (USDC, ETH, BTC).
+    Calcule la valorisation des actifs, l'état du halt, et renvoie capital + balances.
+    Compatible avec la logique de sizing par paliers.
+    """
+    # --- Prix spot USDC ---
+    try:
+        px_eth = float(client.get_symbol_ticker(symbol="ETHUSDC")["price"])
+    except Exception:
+        px_eth = 0.0
+    try:
+        px_btc = float(client.get_symbol_ticker(symbol="BTCUSDC")["price"])
+    except Exception:
+        px_btc = 0.0
 
-    # Soldes libres
-    eth = float(client.get_asset_balance(asset="ETH")["free"])
-    btc = float(client.get_asset_balance(asset="BTC")["free"])
-    usdc = float(client.get_asset_balance(asset="USDC")["free"])
+    # --- Soldes libres ---
+    try:
+        eth = float(client.get_asset_balance(asset="ETH")["free"])
+    except Exception:
+        eth = 0.0
+    try:
+        btc = float(client.get_asset_balance(asset="BTC")["free"])
+    except Exception:
+        btc = 0.0
+    try:
+        usdc = float(client.get_asset_balance(asset="USDC")["free"])
+    except Exception:
+        usdc = 0.0
 
-    # Valorisation en USDC
+    # --- Valorisation en USDC ---
     val_eth = eth * px_eth
     val_btc = btc * px_btc
-    total  = usdc + val_eth + val_btc
+    total = usdc + val_eth + val_btc
 
+    # --- Bloc capital ---
     capital = {
-        "initial": INITIAL_CAPITAL_USDC,
+        "initial": float(INITIAL_CAPITAL_USDC),
         "current": round(total, 2),
-        "max_dd_7d": 0.0,               # à calculer ailleurs si besoin
-        "risk_per_trade_cap": 0.10,
+        "max_dd_7d": 0.0,  # recalculé ailleurs via compute_max_dd_7d
         "halt_if_below_50pct": True,
-        "halt_triggered": (total < 0.5 * INITIAL_CAPITAL_USDC)
+        "halt_triggered": bool(total < 0.5 * INITIAL_CAPITAL_USDC)
     }
 
+    # --- Soldes détaillés ---
     balances = {
-        "USDC": {"amount": round(usdc, 6), "value_usdc": round(usdc, 2)},
-        "ETH":  {"amount": round(eth, 8),  "value_usdc": round(val_eth, 2), "px": round(px_eth, 2)},
-        "BTC":  {"amount": round(btc, 8),  "value_usdc": round(val_btc, 2), "px": round(px_btc, 2)}
+        "USDC": {
+            "amount": round(usdc, 6),
+            "value_usdc": round(usdc, 2),
+            "px": 1.0
+        },
+        "ETH": {
+            "amount": round(eth, 8),
+            "value_usdc": round(val_eth, 2),
+            "px": round(px_eth, 2)
+        },
+        "BTC": {
+            "amount": round(btc, 8),
+            "value_usdc": round(val_btc, 2),
+            "px": round(px_btc, 2)
+        }
     }
 
     return capital, balances
 
 def execute_trade(client, decision, memory):
-    pair = decision.get("pair")
-    asset = decision.get("asset")
-    tf = "1h"
 
-    if decision.get("decision") == "HOLD":
-        memory = update_memory_with_decision(
-        memory=memory,
-        symbol="USDCUSDT",
-        tf=tf,
-        decision_dict=decision,
-        price_usdc=float(client.get_symbol_ticker(symbol="USDCUSDT")["price"]),
-        qty_quote=0,
-        note="pre-trade decision HOLD -  Prix USDC",
-        keep_last=20
-        )
-        return memory
+    # --- Extraction & garde-fous globaux ---
+    pair   = decision.get("pair")
+    asset  = decision.get("asset")
+    side   = decision.get("decision", "HOLD")
+    tf     = decision.get("tf", "1h")
+    px     = float(client.get_symbol_ticker(symbol=pair)["price"]) if pair else 1.0
 
+    c          = memory.get("constraints", {})
+    sym_c      = c.get("symbols", {}).get(pair, {})
+    lot_size   = float(sym_c.get("lot_size", 0.0)) or 0.000001
+    min_not    = float(sym_c.get("min_notional", c.get("min_notional", 5.0)))
+    max_reb    = float(c.get("max_rebalance_pct", 0.30))
+    cap        = float(memory.get("capital", {}).get("current", 0.0))
+    stable     = c.get("stable_symbol", "USDC")
+    halt       = bool(memory.get("capital", {}).get("halt_triggered", False))
+    size_pct   = int(decision.get("size_pct", 0))  # attendu ∈ {5,10,25,50,75}
 
-    # Prix/tailles
-    px = float(client.get_symbol_ticker(symbol=pair)["price"])
-    qty_base = float(decision.get("qty_base", 0.0))
-    qty_quote = qty_base * px
-
-    # Contraintes
-    c = memory["constraints"]
-    sc = c["symbols"][pair]
-    lot_size = float(sc["lot_size"])
-    min_notional = float(sc.get("min_notional", c.get("min_notional", 5.0)))
-    max_reb = float(c["max_rebalance_pct"])
-    cap = float(memory["capital"]["current"])
-    stable = c["stable_symbol"]
-    halt = bool(memory["capital"].get("halt_triggered", False))
-
-    # Pre-trade log
+    # --- Log pré-trade ---
     memory = update_memory_with_decision(
-        memory=memory,
-        symbol=pair,
-        tf=tf,
+        memory=memory, symbol=pair if side != "HOLD" else "USDCUSDT", tf=tf,
         decision_dict=decision,
-        price_usdc=px,
-        qty_quote=qty_quote,
-        note="pre-trade decision",
-        keep_last=20
+        price_usdc=px if side != "HOLD" else float(client.get_symbol_ticker(symbol="USDCUSDT")["price"]),
+        qty_quote=0.0, note="pre-trade decision", keep_last=20
     )
 
-    # Conditions communes
-    ok_rebalance = (qty_quote <= max_reb * cap if cap > 0 else False)
-    ok_min = qty_quote >= min_notional
-    ok_lot = qty_base >= lot_size
-    side = decision.get("decision", "HOLD")
-
-    def post_refresh_and_perf():
+    # --- Cas HOLD / HALT / risk_check KO / palier manquant ---
+    if side == "HOLD" or halt or decision.get("risk_check") not in ("ok", None) or size_pct not in (5,10,25,50,75,100):
+        memory["recent_decisions"][-1]["execution"] = {
+            "ts_exec": int(time.time()), "side": "SKIPPED", "pair": pair, "qty_base": 0.0,
+            "px_exec": px, "reason": "HOLD/halt/risk_check/size_pct"
+        }
+        # refresh
         capital, balances = get_capital_and_balances(client, INITIAL_CAPITAL_USDC=memory["capital"]["initial"])
-        memory["capital"] = capital
-        memory["balances"] = balances
+        memory["capital"], memory["balances"] = capital, balances
+        memory["performance"] = compute_performance(memory["recent_decisions"], capital["current"])
+        memory["capital"]["halt_triggered"] = bool(capital["current"] < 0.5 * capital["initial"])
+        return memory
+
+    # --- Fonctions utilitaires locales ---
+    def rebalance_ok(notional_quote: float) -> bool:
+        return notional_quote <= max_reb * cap if cap > 0 else False
+
+    def round_to_lot(q: float) -> float:
+        return math.floor(q / lot_size) * lot_size
+
+    def refresh_post_exec():
+        capital, balances = get_capital_and_balances(client, INITIAL_CAPITAL_USDC=memory["capital"]["initial"])
+        memory["capital"], memory["balances"] = capital, balances
         memory["performance"] = compute_performance(memory["recent_decisions"], capital["current"])
         memory["capital"]["halt_triggered"] = bool(capital["current"] < 0.5 * capital["initial"])
 
-    # HOLD ou HALT
-    if side == "HOLD" or halt or decision.get("risk_check") != "ok":
-        memory["recent_decisions"][-1]["execution"] = {
-            "ts_exec": int(time.time()),
-            "side": "SKIPPED",
-            "pair": pair,
-            "qty_base": 0.0,
-            "px_exec": px,
-            "reason": "HOLD/halt/risk_check"
-        }
-        post_refresh_and_perf()
-        return memory
-
-    # Vérifs taille
-    if not (ok_rebalance and ok_min and ok_lot):
-        memory["recent_decisions"][-1]["execution"] = {
-            "ts_exec": int(time.time()),
-            "side": "SKIPPED",
-            "pair": pair,
-            "qty_base": qty_base,
-            "px_exec": px,
-            "reason": "size/min_notional/rebalance"
-        }
-        post_refresh_and_perf()
-        return memory
-
-    # Arrondi lot size avant envoi
-    qty_base = math.floor(qty_base / lot_size) * lot_size
-    if qty_base <= 0:
-        memory["recent_decisions"][-1]["execution"] = {
-            "ts_exec": int(time.time()),
-            "side": "SKIPPED",
-            "pair": pair,
-            "qty_base": 0.0,
-            "px_exec": px,
-            "reason": "rounded_to_zero"
-        }
-        post_refresh_and_perf()
-        return memory
-
-    # SELL
+    # --- SELL : % de base libre, dé-escalade si notional < min_not ---
     if side == "SELL":
         free_base = float(client.get_asset_balance(asset=asset)["free"])
-        qty_base = min(qty_base, math.floor(free_base / lot_size) * lot_size)
-        if qty_base <= 0:
-            memory["recent_decisions"][-1]["execution"] = {
-                "ts_exec": int(time.time()),
-                "side": "SKIPPED",
-                "pair": pair,
-                "qty_base": 0.0,
-                "px_exec": px,
-                "reason": "no_base_available"
-            }
-            post_refresh_and_perf()
-            return memory
-        
-        print("Tentative Sell : ", qty_base, asset, "au prix", px, "USDC")
-
-        order = client.order_market_sell(symbol=pair, quantity=float(qty_base))
-        print("Order exécuté:", side,order)
+        for palier in ([size_pct] + [p for p in (100,75,50,25,10,5) if p < size_pct]):
+            qty_plan = free_base * (palier / 100.0)
+            qty_base = float((Decimal(str(qty_base)) // Decimal(str(lot_size))) * Decimal(str(lot_size)))
+            notional = qty_base * px
+            if qty_base > 0 and notional >= min_not:
+                # Exécution SELL
+                order = client.order_market_sell(symbol=pair, quantity=float(qty_base))
+                memory["recent_decisions"][-1]["execution"] = {
+                    "ts_exec": int(time.time()), "side": "SELL", "pair": pair, "qty_base": qty_base,
+                    "px_exec": px, "order_id": order.get("orderId"),
+                    "executed_qty": float(order.get("executedQty", 0.0)),
+                    "cummulative_quote_qty": float(order.get("cummulativeQuoteQty", 0.0)),
+                    "palier_initial": size_pct, "palier_effectif": palier
+                }
+                refresh_post_exec(); return memory
+        # Rien de faisable
         memory["recent_decisions"][-1]["execution"] = {
-            "ts_exec": int(time.time()),
-            "side": "SELL",
-            "pair": pair,
-            "qty_base": qty_base,
-            "px_exec": px,
-            "order_id": order.get("orderId"),
-            "executed_qty": float(order.get("executedQty", 0.0)),
-            "cummulative_quote_qty": float(order.get("cummulativeQuoteQty", 0.0))
+            "ts_exec": int(time.time()), "side": "SKIPPED", "pair": pair, "qty_base": 0.0,
+            "px_exec": px, "reason": "min_notional/lot_size after de-escalation",
+            "palier_initial": size_pct, "palier_effectif": 0
         }
-        post_refresh_and_perf()
-        return memory
+        refresh_post_exec(); return memory
 
-    # BUY
+    # --- BUY : % de USDC libre, escalade si notional < min_not ---
     if side == "BUY":
-        free_stable = float(client.get_asset_balance(asset=stable)["free"])
-        max_buy_base = math.floor((free_stable / px) / lot_size) * lot_size
-        qty_base = min(qty_base, max_buy_base)
+        usdc_free = float(client.get_asset_balance(asset=stable)["free"])
+        # budget max autorisé par rebalance (cap) et cash dispo
+        budget_cap = min(max_reb * cap, usdc_free) if cap > 0 else usdc_free
+        # escalade : palier initial puis supérieurs
+        for palier in ([size_pct] + [p for p in (5,10,25,50,75,100) if p > size_pct]):
+            budget_plan = usdc_free * (palier / 100.0)
+            budget_use  = min(budget_plan, budget_cap)
+            qty_plan    = budget_use / px
+            qty_base    = round_to_lot(qty_plan)
+            notional    = qty_base * px
+            if qty_base > 0 and notional >= min_not and rebalance_ok(notional):
+                # Exécution BUY
+                order = client.order_market_buy(symbol=pair, quantity=float(qty_base))
+                memory["recent_decisions"][-1]["execution"] = {
+                    "ts_exec": int(time.time()), "side": "BUY", "pair": pair, "qty_base": qty_base,
+                    "px_exec": px, "order_id": order.get("orderId"),
+                    "executed_qty": float(order.get("executedQty", 0.0)),
+                    "cummulative_quote_qty": float(order.get("cummulativeQuoteQty", 0.0)),
+                    "palier_initial": size_pct, "palier_effectif": palier
+                }
+                refresh_post_exec(); return memory
 
-        if qty_base <= 0:
-            memory["recent_decisions"][-1]["execution"] = {
-                "ts_exec": int(time.time()),
-                "side": "SKIPPED",
-                "pair": pair,
-                "qty_base": 0.0,
-                "px_exec": px,
-                "reason": "no_stable_available"
-            }
-            post_refresh_and_perf()
-            return memory
-
-        print("Tentative Buy : ", qty_base, asset, "au prix", px, "USDC")
-
-        order = client.order_market_buy(symbol=pair, quantity=float(qty_base))
-        print("Order exécuté:", side, order)
+        # Rien de faisable (soit min_not, soit lot, soit rebalance)
         memory["recent_decisions"][-1]["execution"] = {
-            "ts_exec": int(time.time()),
-            "side": "BUY",
-            "pair": pair,
-            "qty_base": qty_base,
-            "px_exec": px,
-            "order_id": order.get("orderId"),
-            "executed_qty": float(order.get("executedQty", 0.0)),
-            "cummulative_quote_qty": float(order.get("cummulativeQuoteQty", 0.0))
+            "ts_exec": int(time.time()), "side": "SKIPPED", "pair": pair, "qty_base": 0.0,
+            "px_exec": px, "reason": "min_notional/lot_size/rebalance after escalation",
+            "palier_initial": size_pct, "palier_effectif": 0
         }
-        post_refresh_and_perf()
-        return memory
+        refresh_post_exec(); return memory
 
-    # Cas inconnu
+    # --- Côté inconnu ---
     memory["recent_decisions"][-1]["execution"] = {
-        "ts_exec": int(time.time()),
-        "side": "SKIPPED",
-        "pair": pair,
-        "qty_base": 0.0,
-        "px_exec": px,
-        "reason": f"unknown_side_{side}"
+        "ts_exec": int(time.time()), "side": "SKIPPED", "pair": pair, "qty_base": 0.0,
+        "px_exec": px, "reason": f"unknown_side_{side}"
     }
-    post_refresh_and_perf()
-    return memory
+    refresh_post_exec(); return memory
 
-def get_future_decision(client, client_openai):
-    with open("memory.json", "r") as f:
-        memory = json.load(f)
+def get_future_decision(client, client_openai, memory):
+    memory.setdefault("capital", {})
+    memory.setdefault("recent_decisions", [])
+    memory.setdefault("capital_history", [])
 
-    market_data = {
-        "ETHUSDC": get_market_data(client, "ETHUSDC"),
-        "BTCUSDC": get_market_data(client, "BTCUSDC")
-    }
+    # 1) Capital + soldes (initial depuis mémoire si présent, sinon fallback)
+    initial_cap = float(memory["capital"].get("initial", 5000.0))
+    capital, balances = get_capital_and_balances(client, INITIAL_CAPITAL_USDC=initial_cap)
 
-    # 1) Capital + soldes par actif
-    capital, balances = get_capital_and_balances(client, INITIAL_CAPITAL_USDC=capital_initial)
-
-    # 2) Règle de halt (50%)
+    # 2) MAJ halt + historique capital + DD 7j
     capital["halt_triggered"] = bool(capital["current"] < 0.5 * capital["initial"])
+    snapshot_capital(memory, capital["current"])
+    capital["max_dd_7d"] = compute_max_dd_7d(memory.get("capital_history", []), capital["current"])
 
-    # 3) Regime (ETH & BTC, overview + per_asset + relative_strength)
+    # 3) Régime (ETH/BTC)
     regime = compute_regime(client)
 
-    # 4) Historique de décisions (préserve si déjà présent)
+    # 4) Performance (à partir de l’historique conservé)
     recent_decisions = memory.get("recent_decisions", [])
-
-    # 5) Performance (historique + métriques actuelles)
     performance = compute_performance(recent_decisions, capital["current"])
 
-
-    # 6) Mise à jour de la mémoire
+    # 5) État mémoire mis à jour (servira aussi au sizing des market_data)
     memory["capital"] = capital
     memory["balances"] = balances
     memory["recent_decisions"] = recent_decisions
     memory["performance"] = performance
     memory["regime"] = regime
 
-    # 7) Préparation du payload
-    payload = {
-        "market_data": market_data,
-        "memory": memory
-    }
+    # 6) Market data (avec features de sizing/paliers)
+    md_eth = get_market_data(client, "ETHUSDC", balances=balances, memory=memory)
+    md_btc = get_market_data(client, "BTCUSDC", balances=balances, memory=memory)
+    market_data = {"ETHUSDC": md_eth, "BTCUSDC": md_btc}
 
+    # 7) Payload LLM et décision
+    payload = {"market_data": market_data, "memory": memory}
     decision = get_decision(client_openai, payload)
 
     return decision
 
 def compute_max_dd_7d(capital_history, current_capital, now_ts=None):
-    import time
+
     now = now_ts or int(time.time())
     last7 = [p["capital"] for p in capital_history if p.get("timestamp",0) >= now-7*86400]
     peak = max(last7+[current_capital]) if last7 else current_capital
     return round(100.0*((current_capital/peak) - 1.0), 3)
 
 def snapshot_capital(memory, current_capital, now_ts=None):
-    import time
+
     now = now_ts or int(time.time())
     hist = memory.setdefault("capital_history", [])
     # anti-doublon: 1 point max / heure
@@ -775,7 +919,7 @@ def snapshot_capital(memory, current_capital, now_ts=None):
     return hist
 
 def binance_time_offset_ms(client):
-    import time
+
     srv = client.get_server_time()["serverTime"]
     offset = int(srv) - int(time.time() * 1000)
     # Log + garde douce (pas de sleep agressif dans Airflow)
