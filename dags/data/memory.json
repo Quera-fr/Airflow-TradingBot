@@ -1,7 +1,7 @@
 {
   "capital": {
     "initial": 41.0,
-    "current": 61.24,
+    "current": 61.25,
     "max_dd_7d": 0.0,
     "halt_if_below_50pct": true,
     "halt_triggered": false
@@ -33,12 +33,12 @@
     "ETH": {
       "amount": 0.00162498,
       "value_usdc": 7.09,
-      "px": 4360.4
+      "px": 4364.49
     },
     "BTC": {
       "amount": 4.151e-05,
-      "value_usdc": 4.52,
-      "px": 108898.0
+      "value_usdc": 4.53,
+      "px": 109028.0
     }
   },
   "performance": {
@@ -152,7 +152,7 @@
       }
     },
     {
-      "ts": 1756743043,
+      "ts": 1756743531,
       "symbol": "USDCUSDT",
       "pair": "ETHUSDC",
       "asset": "USDC",
@@ -176,12 +176,13 @@
         "closed": false
       },
       "note": "pre-trade decision",
+      "next_step": "Si MACD_hist H1 repasse positif sur ETH ou BTC avec RSI>50 et cassure haussiere EMA20, envisager un BUY 25% sur l'actif correspondant.",
       "execution": {
-        "ts_exec": 1756743043,
+        "ts_exec": 1756743531,
         "side": "SKIPPED",
         "pair": "ETHUSDC",
         "qty_base": 0.0,
-        "px_exec": 4360.11,
+        "px_exec": 4364.18,
         "reason": "HOLD/halt/risk_check/size_pct"
       }
     }

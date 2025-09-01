@@ -3,3 +3,4 @@
 {"timestamp":"2025-09-01T12:31:32.365278","level":"info","event":"Secrets backends loaded for worker","count":1,"backend_classes":["EnvironmentVariablesBackend"],"logger":"supervisor"}
 {"timestamp":"2025-09-01T12:31:32.474746","level":"info","event":"Connection Retrieved 'binance_api'","logger":"airflow.hooks.base"}
 {"timestamp":"2025-09-01T12:31:33.401108Z","level":"info","event":"[TimeSync] server-local offset = 2294 ms","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T12:31:36.328632","level":"info","event":"Done. Returned value was: None","logger":"airflow.task.operators.airflow.providers.standard.operators.python.PythonOperator"}

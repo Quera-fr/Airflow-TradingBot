@@ -1,0 +1,7 @@
+[theme]
+base="dark"
+primaryColor="#F0B90B"   # Jaune Binance
+backgroundColor="#0B0E11"
+secondaryBackgroundColor="#181A20"
+textColor="#EAECEF"
+font="sans serif"

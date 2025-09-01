@@ -5,3 +5,5 @@
 {"timestamp":"2025-09-01T13:00:44.532672","level":"info","event":"Secrets backends loaded for worker","count":1,"backend_classes":["EnvironmentVariablesBackend"],"logger":"supervisor"}
 {"timestamp":"2025-09-01T13:00:44.565381","level":"info","event":"Connection Retrieved 'binance_api'","logger":"airflow.hooks.base"}
 {"timestamp":"2025-09-01T13:00:45.079178Z","level":"info","event":"[TimeSync] server-local offset = 2354 ms","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T13:00:46.916826Z","level":"info","event":"[Décideur] time_sleep_s suggéré : 3600s (aucun sleep ici ; la cadence est gérée par Airflow).","chan":"stdout","logger":"task"}
+{"timestamp":"2025-09-01T13:00:46.917595","level":"info","event":"Done. Returned value was: None","logger":"airflow.task.operators.airflow.providers.standard.operators.python.PythonOperator"}
