@@ -57,17 +57,40 @@ with DAG(
         memory["balances"] = balances
         memory["performance"] = performance
 
+        # --- SIZING DYNAMIQUE AVEC PLANCHER D'ACHAT ---
         usdc_free = float(balances.get("USDC", {}).get("amount", 0.0))
-        max_reb = float(memory.get("constraints", {}).get("max_rebalance_pct", 0.30))
-        risk_cap = float(memory["capital"].get("risk_per_trade_cap", capital["current"]*0.10))
-        cap_max = min(capital["current"]*max_reb, risk_cap, usdc_free)
-
+        max_reb   = float(memory.get("constraints", {}).get("max_rebalance_pct", 0.30))
+        
+        # Pourcentage de risque (ex: 0.10 = 10%)
+        risk_pct  = float(memory["capital"].get("risk_per_trade_pct", 0.10))
+        risk_cap  = capital["current"] * risk_pct
+        
+        # Budget basé sur le risque et le max rebalance
+        cap_max_risk = min(capital["current"] * max_reb, risk_cap, usdc_free)
+        
+        # Plancher d'achat = plus petit min_notional des actifs tradables (ex: 5 USDC),
+        # activé si capital et USDC libre suffisent.
+        symbols = memory.get("constraints", {}).get("symbols", {})  # {"ETHUSDC": {...}, "BTCUSDC": {...}}
+        min_notionals = [float(cfg.get("min_notional", 5.0)) for cfg in symbols.values()] or [5.0]
+        global_min_notional = min(min_notionals)
+        
+        floor_ok = (capital["current"] >= global_min_notional) and (usdc_free >= global_min_notional)
+        cap_floor = global_min_notional if floor_ok else 0.0
+        
+        # Budget d'achat effectif = max(risque, plancher) mais jamais > usdc_free
+        cap_buy_budget = min(max(cap_max_risk, cap_floor), usdc_free)
+        
         memory["sizing"] = {
             "usdc_free": round(usdc_free, 4),
-            "cap_max": round(cap_max, 4),
+            "cap_max": round(cap_max_risk, 4),          # budget risk-based (info)
+            "cap_buy_budget": round(cap_buy_budget, 4), # budget à utiliser pour BUY
             "risk_cap": round(risk_cap, 4),
-            "max_rebalance_pct": max_reb
+            "risk_pct": round(risk_pct, 3),
+            "max_rebalance_pct": max_reb,
+            "min_ticket_usdc": global_min_notional,
+            "floor_applied": bool(cap_floor > 0 and cap_floor > cap_max_risk)
         }
+
 
         snapshot_capital(memory, capital["current"])
 
@@ -127,5 +150,6 @@ with DAG(
     decision_task = PythonOperator(task_id="decision_task", python_callable=decision_task)
 
     action_task = PythonOperator(task_id="action_task", python_callable=action_task)
+
 
     connexion_task >> get_memory_task >> decision_task >> action_task
